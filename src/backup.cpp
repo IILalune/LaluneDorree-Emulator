@@ -32,8 +32,10 @@ void Eeprom::writeBit(u16 value) {
     if (bits_.size() < 2) return;
 
     const u32 command = (bits_[0] << 1) | bits_[1];
+    // `>=` rather than `==`: the address size can be detected in the middle of
+    // a request, and the buffer must never grow without limit.
     if (command == 3) {  // read request
-        if (bits_.size() == static_cast<std::size_t>(2 + addrBits + 1)) {
+        if (bits_.size() >= static_cast<std::size_t>(2 + addrBits + 1)) {
             const u32 block = bitsToNumber(2, addrBits) & 0x3FF;
             const u32 offset = (block * 8) % data.size();
             sendBuffer_ = 0;
@@ -43,7 +45,7 @@ void Eeprom::writeBit(u16 value) {
             bits_.clear();
         }
     } else if (command == 2) {  // write request
-        if (bits_.size() == static_cast<std::size_t>(2 + addrBits + 64 + 1)) {
+        if (bits_.size() >= static_cast<std::size_t>(2 + addrBits + 64 + 1)) {
             const u32 block = bitsToNumber(2, addrBits) & 0x3FF;
             const u32 offset = (block * 8) % data.size();
             for (int i = 0; i < 8; ++i) {

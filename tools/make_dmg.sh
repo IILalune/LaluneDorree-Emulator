@@ -85,8 +85,28 @@ fi
 
 # 4. Sign. This is an ad-hoc signature (no Apple Developer ID), so people who
 #    download the app have to allow it once in System Settings (see README).
-codesign --force --sign - "$APP" 2> /dev/null
+#    - "--options runtime" turns on the hardened runtime: macOS then refuses to
+#      load injected or unsigned libraries into the app or let other programs
+#      attach a debugger to it.
+#    - The entitlements turn on the App Sandbox (assets/LaLuneDoree.entitlements
+#      lists the few things the app may still do).
+#    - container-migration.plist moves data from earlier versions into the
+#      sandbox on first launch.
+cp "$ROOT/assets/container-migration.plist" "$APP/Contents/Resources/"
+codesign --force --options runtime --entitlements "$ROOT/assets/LaLuneDoree.entitlements" --sign - "$APP" 2> /dev/null
 codesign --verify --strict "$APP"
+# (Captured first: with pipefail, `codesign | grep -q` can fail when grep
+# stops reading early.)
+SIGNATURE=$(codesign -dv "$APP" 2>&1)
+ENTITLEMENTS=$(codesign -d --entitlements - "$APP" 2> /dev/null)
+if [[ "$SIGNATURE" != *flags=*runtime* ]]; then
+  echo "error: the app was signed without the hardened runtime" >&2
+  exit 1
+fi
+if [[ "$ENTITLEMENTS" != *com.apple.security.app-sandbox* ]]; then
+  echo "error: the app was signed without the App Sandbox" >&2
+  exit 1
+fi
 
 # 5. The disk image: the app, a shortcut to Applications to drag it onto, and
 #    a background with an arrow between them (assets/dmg-background.tiff, drawn

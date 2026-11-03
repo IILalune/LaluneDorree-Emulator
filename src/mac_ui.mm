@@ -3,6 +3,7 @@
 
 #import <AppKit/AppKit.h>
 #import <CoreText/CoreText.h>
+#import <GameController/GameController.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <cmath>
@@ -108,10 +109,74 @@ std::string chooseFolder(const std::string& current) {
     return result;
 }
 
+// Asks macOS not to use the controller's buttons for its own shortcuts (the
+// Home / PS button opens the Games overlay or Launchpad) while this app is in
+// front, so the app gets the press instead.
+static void keepButtonsFromSystem(GCController* controller) {
+    for (NSString* name in controller.physicalInputProfile.buttons) {
+        GCControllerButtonInput* button = controller.physicalInputProfile.buttons[name];
+        if (button.isBoundToSystemGesture) button.preferredSystemGestureState = GCSystemGestureStateDisabled;
+    }
+}
+
+void keepControllerButtonsFromSystem() {
+    @autoreleasepool {
+        static id observer = nil;
+        if (!observer) {
+            // Controllers connected later, including after waking from sleep.
+            observer = [[NSNotificationCenter defaultCenter]
+                addObserverForName:GCControllerDidConnectNotification
+                            object:nil
+                             queue:[NSOperationQueue mainQueue]
+                        usingBlock:^(NSNotification* note) {
+                          if ([note.object isKindOfClass:[GCController class]]) keepButtonsFromSystem(note.object);
+                        }];
+        }
+        for (GCController* controller in [GCController controllers]) keepButtonsFromSystem(controller);
+    }
+}
+
 void openInFinder(const std::string& folder) {
     @autoreleasepool {
         NSString* path = [NSString stringWithUTF8String:folder.c_str()];
         [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
+    }
+}
+
+static std::string bookmarkFor(NSURL* url) {
+    NSData* data = [url bookmarkDataWithOptions:NSURLBookmarkCreationWithSecurityScope
+                 includingResourceValuesForKeys:nil
+                                  relativeToURL:nil
+                                          error:nil];
+    return data ? std::string([data base64EncodedStringWithOptions:0].UTF8String) : std::string();
+}
+
+std::string makeFolderBookmark(const std::string& folder) {
+    @autoreleasepool {
+        NSString* path = [NSString stringWithUTF8String:folder.c_str()];
+        if (!path) return "";
+        return bookmarkFor([NSURL fileURLWithPath:path isDirectory:YES]);
+    }
+}
+
+std::string openFolderBookmark(std::string& bookmark) {
+    @autoreleasepool {
+        NSString* text = [NSString stringWithUTF8String:bookmark.c_str()];
+        NSData* data = text ? [[NSData alloc] initWithBase64EncodedString:text options:0] : nil;
+        if (!data) return "";
+        BOOL stale = NO;
+        NSURL* url = [NSURL URLByResolvingBookmarkData:data
+                                               options:NSURLBookmarkResolutionWithSecurityScope |
+                                                       NSURLBookmarkResolutionWithoutUI
+                                         relativeToURL:nil
+                                   bookmarkDataIsStale:&stale
+                                                 error:nil];
+        // Access lasts until the app quits, which is what the library needs.
+        if (!url || ![url startAccessingSecurityScopedResource]) return "";
+        if (stale) {
+            if (std::string fresh = bookmarkFor(url); !fresh.empty()) bookmark = fresh;
+        }
+        return url.fileSystemRepresentation;
     }
 }
 

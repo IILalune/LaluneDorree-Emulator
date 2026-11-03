@@ -31,4 +31,20 @@ std::string chooseFolder(const std::string& current);
 // Opens a folder in Finder.
 void openInFinder(const std::string& folder);
 
+// The downloadable app runs in the App Sandbox, which only lets it open a folder
+// outside its own while you've allowed it (by picking it in an Open dialog).
+// A bookmark keeps that permission between launches.
+// Makes a bookmark (as text, for settings.ini) for a folder you just picked.
+// Returns "" on failure.
+std::string makeFolderBookmark(const std::string& folder);
+// Regains access to a bookmarked folder and returns its current path ("" if
+// the folder is gone or the bookmark is invalid). `bookmark` is updated if
+// macOS asks for a fresher one.
+std::string openFolderBookmark(std::string& bookmark);
+
+// Stops macOS from taking controller buttons for its own shortcuts while the
+// app is in front (the PS button would open the Games overlay). Covers
+// controllers that connect later too. Safe to call more than once.
+void keepControllerButtonsFromSystem();
+
 }  // namespace macui

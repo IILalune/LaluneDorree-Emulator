@@ -270,7 +270,10 @@ void Bios::bitUnPack() {
     u32 offset = bus.read<u32>(info + 4);
     const bool offsetZeros = offset & 0x80000000;
     offset &= 0x7FFFFFFF;
-    if (srcWidth == 0 || dstWidth == 0) return;
+    // Only these widths exist on hardware; anything else (e.g. 33) would make
+    // the shifts below undefined behaviour.
+    auto valid = [](u32 width, u32 max) { return width != 0 && width <= max && (width & (width - 1)) == 0; };
+    if (!valid(srcWidth, 8) || !valid(dstWidth, 32)) return;
 
     u32 out = 0, outBits = 0;
     const u32 mask = (1u << srcWidth) - 1;

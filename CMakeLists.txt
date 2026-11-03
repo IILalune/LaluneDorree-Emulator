@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LaLuneDoree VERSION 1.1 LANGUAGES CXX OBJCXX)
+project(LaLuneDoree VERSION 1.01 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,6 +33,7 @@ set(CORE_SOURCES
 # The app around it: window, input, audio and the game library UI.
 set(FRONTEND_SOURCES
   src/main.cpp
+  src/controls.cpp
   src/library.cpp
   src/settings.cpp
   src/video_filters.cpp
@@ -71,9 +72,17 @@ target_link_libraries(LaLuneDoree PRIVATE
   ${SDL_TARGET}
   "-framework AppKit"
   "-framework CoreText"
+  "-framework GameController"
   "-framework UniformTypeIdentifiers"
 )
 target_compile_options(LaLuneDoree PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+# Hardening, because the app runs code from ROM files downloaded off the internet:
+# - libc++ "fast" hardening mode makes std::array/std::vector indexing and
+#   similar operations stop the app instead of reading or writing out of bounds.
+# - Stack canaries on every function with arrays or address-taken locals.
+target_compile_definitions(LaLuneDoree PRIVATE _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST)
+target_compile_options(LaLuneDoree PRIVATE -fstack-protector-strong)
 
 set_target_properties(LaLuneDoree PROPERTIES
   OUTPUT_NAME "${APP_NAME}"

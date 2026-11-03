@@ -7,16 +7,17 @@
 // An empty games folder shows an "Insert a game" prompt instead of a list.
 // Only the PS5 DualSense is supported as a controller (Xbox pads are not).
 //
-// Controls (keyboard, in game):
-//   Arrow keys = D-pad    X = A    Z = B    A = L    S = R
-//   Return = Start        Backspace / Right Shift = Select
-//   Tab (hold) = fast-forward    F / F11 = toggle fullscreen    Esc = pause menu
+// Default controls (all changeable on Settings > Controls; see controls.cpp):
+//   Keyboard: arrow keys = D-pad    X = A    Z = B    A = L    S = R
+//             Return = Start    Backspace / Right Shift = Select
+//             Tab (hold) = fast-forward    ` = slow motion on/off (half speed)
+//   DualSense: left stick / D-pad = D-pad    Cross = A    Square / Circle = B
+//             L1 / L2 = L    R1 / R2 = R    Options = Start    Create = Select
+//             touchpad click (hold) = fast-forward    R3 = slow motion on/off
+//   Turbo A / Turbo B are unassigned until you pick keys for them.
+// Fixed keys: Esc / PS / mic button = pause menu    F / F11 = toggle fullscreen
 //   V / Shift+V = next / previous video filter    3-6 = window size 3x-6x
-//
-// Controls (game controller, PS5 DualSense names; see kButtonMap):
-//   Left stick / D-pad = D-pad    Cross = A    Square / Circle = B
-//   L1 / L2 = L    R1 / R2 = R    Options = Start    Create = Select
-//   Touchpad click (hold) = fast-forward    PS / mic button = pause menu
+//   (F, V and 3-6 go to the game instead if you assign them to a control.)
 //
 // Usage:
 //   LaLuneDoree [rom.gba]                    open the library, or play a ROM directly
@@ -54,10 +55,19 @@ namespace {
 
 constexpr const char* kAppName = "LaLune Dor\u00E9e Emulator";
 
+// Reads a ROM file, stopping just past the 32 MiB a GBA ROM can be at most.
+// Anything longer is cut off there (and then rejected by GBA::loadRom), so a
+// huge or endless file can't use up all the Mac's memory.
 std::optional<std::vector<u8>> readFile(const std::string& path) {
+    constexpr std::size_t kMaxRomSize = 32 * 1024 * 1024;
     std::ifstream file(path, std::ios::binary);
     if (!file) return std::nullopt;
-    return std::vector<u8>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::vector<u8> data;
+    char buffer[64 * 1024];
+    while (data.size() <= kMaxRomSize && (file.read(buffer, sizeof buffer) || file.gcount() > 0)) {
+        data.insert(data.end(), buffer, buffer + file.gcount());
+    }
+    return data;
 }
 
 bool fileExists(const std::string& path) { return static_cast<bool>(std::ifstream(path)); }
@@ -99,7 +109,8 @@ void copyDataFromOldName() {
 // code, so fall back to the ROM's file name.
 std::string savePathFor(const std::string& gameCode, const std::string& romPath) {
     const bool validCode = gameCode.size() == 4 &&
-                           std::all_of(gameCode.begin(), gameCode.end(), [](char c) { return std::isalnum(c); });
+                           std::all_of(gameCode.begin(), gameCode.end(),
+                                       [](unsigned char c) { return std::isalnum(c); });
     const std::string name = validCode ? gameCode : std::filesystem::path(romPath).stem().string();
     return prefPath() + name + ".sav";
 }
@@ -254,12 +265,22 @@ struct Random {
 enum class Align { Left, Center, Right };
 
 // Things a player can do in a menu, from any input device.
-enum class MenuAction { Up, Down, Left, Right, Accept, Back, AddRoms, OpenFolder, OpenSettings };
+enum class MenuAction { Up, Down, Left, Right, Accept, Back, AddRoms, OpenFolder, OpenSettings, Clear };
 
-enum class Screen { Library, Playing, Paused, Settings };
+enum class Screen { Library, Playing, Paused, Settings, Controls };
 
 // Rows on the settings screen, in display order.
-enum class SettingRow { Volume, FastForward, VideoFilter, Scaling, Fullscreen, ConfirmButton, RomFolder, Done, Count };
+enum class SettingRow {
+    Volume, FastForward, VideoFilter, Scaling, Fullscreen, Controls, ConfirmButton, RomFolder, Done, Count
+};
+
+// Rows below the button list on the Controls screen.
+enum class ControlOption { StickDpad, StickDeadzone, TriggerPoint, TurboSpeed, FastForwardMode, Count };
+constexpr int kControlOptionCount = static_cast<int>(ControlOption::Count);
+
+constexpr u32 controlBit(Control c) { return 1u << static_cast<int>(c); }
+// Controls that press GBA buttons (as opposed to fast-forward and slow motion).
+constexpr u32 kGameControls = (1u << static_cast<int>(Control::TurboB)) * 2 - 1;
 
 std::string settingsPath() { return prefPath() + "settings.ini"; }
 // Built from source: the games/ folder in the project (set by CMakeLists.txt).
@@ -272,12 +293,24 @@ std::string defaultRomFolder() {
 #endif
 }
 
+// The games folder to open at launch. A folder picked in Settings has a
+// bookmark: the sandboxed app needs it to be allowed back into that folder,
+// and it also follows the folder if it was moved or renamed.
+std::string startupRomFolder(Settings& settings) {
+    if (settings.romFolder.empty()) return defaultRomFolder();
+    if (!settings.romFolderBookmark.empty()) {
+        if (std::string path = macui::openFolderBookmark(settings.romFolderBookmark); !path.empty()) {
+            settings.romFolder = path;
+        }
+    }
+    return settings.romFolder;
+}
+
 class App {
 public:
     App()
         : settings_(Settings::load(settingsPath())),
-          library_(settings_.romFolder.empty() ? defaultRomFolder() : settings_.romFolder,
-                   prefPath() + "Thumbnails") {}
+          library_(startupRomFolder(settings_), prefPath() + "Thumbnails") {}
 
     ~App() {
         clearTextCache();
@@ -307,6 +340,7 @@ public:
         startTicks_ = SDL_GetTicks();
         library_.refresh();
         if (hidden) return true;
+        macui::keepControllerButtonsFromSystem();  // the PS button opens our menu, not the Games overlay
         if (settings_.fullscreen) SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
 
         SDL_AudioSpec want{}, have{};
@@ -339,6 +373,10 @@ public:
         screen_ = Screen::Playing;
         suppressInput_ = true;
         tapped_ = 0;
+        slowMotion_ = false;  // each game starts at normal speed
+        fastForwardOn_ = false;
+        prevControls_ = heldControls();
+        lastSample_[0] = lastSample_[1] = 0;
         nextFrame_ = Clock::now();
         lastSave_ = Clock::now();
         return true;
@@ -367,6 +405,11 @@ public:
                 SDL_RenderPresent(renderer_);
                 SDL_Delay(16);
                 break;
+            case Screen::Controls:
+                drawControls();
+                SDL_RenderPresent(renderer_);
+                SDL_Delay(16);
+                break;
             }
             // Write the save file a couple of seconds after the game changes it.
             if (gba_ && gba_->saveDirty() && Clock::now() - lastSave_ > std::chrono::seconds(2)) {
@@ -379,7 +422,8 @@ public:
 
 private:
     using Clock = std::chrono::steady_clock;
-    static constexpr u32 kFastForwardFlag = 1u << 16;
+    // Slow motion makes every frame last this many times longer (2 = half speed).
+    static constexpr int kSlowMotionFactor = 2;
     // Keep about 3 frames of audio queued: enough to avoid crackles,
     // small enough to keep latency low.
     static constexpr Uint32 kTargetAudioQueue = 3 * (APU::kSampleRate / 60) * 2 * sizeof(s16);
@@ -417,13 +461,28 @@ private:
     std::string romPath_, savePath_;
     Clock::time_point nextFrame_ = Clock::now(), lastSave_ = Clock::now();
     bool fastForwarding_ = false;
+    bool slowMotion_ = false;   // toggled with ` or R3; holding fast-forward overrides it
+    s16 lastSample_[2] = {};    // last stereo sample queued, for smooth slow-motion audio
+    std::vector<s16> stretched_;  // slow-motion audio buffer, kept to avoid reallocating
 
-    u32 keyboardKeys_ = 0;
-    u32 controllerKeys_ = 0;
-    u32 tapped_ = 0;          // keys pressed since the last frame (even if already released)
+    // Input. "Controls" are bits of controlBit(Control::...), see controls.hpp.
+    std::vector<int> heldKeys_;   // keyboard keys held down that are assigned to a control
+    u32 padControls_ = 0;     // controls held on the controller this frame
+    u32 padDirections_ = 0;   // the controller's own D-pad and left stick, for menus (Key bits)
+    u32 tapped_ = 0;          // controls pressed since the last frame (even if already released)
+    u32 prevControls_ = 0;    // controls held last frame, to spot new presses
+    bool fastForwardOn_ = false;  // "Toggle" fast-forward mode: switched on
+    int turboTick_ = 0;       // frames since a turbo button was pressed
     bool suppressInput_ = false;  // ignore buttons still held from a menu until released
     bool stickActive_ = false;
     int stickSector_ = -1;    // last 8-way direction of the left stick, -1 = centred
+
+    // Controls screen
+    int controlsRow_ = 0, controlsCol_ = 0;  // selection; binding rows have 4 columns (2 keys, 2 buttons)
+    int controlsScroll_ = 0;                 // first row shown
+    bool capturing_ = false;                 // waiting for the key or button to assign
+    Uint32 captureUntil_ = 0;                // capture gives up at this time (ms)
+    bool captureTriggerDown_[2] = {};        // L2/R2 already held when capture started
     int navDirection_ = 0;    // controller direction held in menus (see updateMenuRepeat)
     Uint32 navRepeatAt_ = 0;  // when that held direction repeats next (ms)
 
@@ -459,32 +518,8 @@ private:
     double introSkippedAt_ = -1;  // animation time when the intro was skipped, or -1
     double timeOverride_ = -1;    // --ui-dump draws at fixed moments
 
-    // Controller layout. SDL names face buttons by position (Xbox style):
-    // A = bottom (Cross), B = right (Circle), X = left (Square), Y = top (Triangle).
-    // Cross is A because it is the main action button on PlayStation; Square
-    // is B because it sits left of Cross, like B sits left of A on a GBA.
-    struct ButtonBinding {
-        SDL_GameControllerButton button;
-        u32 key;
-    };
-    static constexpr ButtonBinding kButtonMap[] = {
-        {SDL_CONTROLLER_BUTTON_A, KeyA},                // Cross
-        {SDL_CONTROLLER_BUTTON_X, KeyB},                // Square
-        {SDL_CONTROLLER_BUTTON_B, KeyB},                // Circle
-        {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, KeyL},     // L1
-        {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, KeyR},    // R1
-        {SDL_CONTROLLER_BUTTON_START, KeyStart},        // Options
-        {SDL_CONTROLLER_BUTTON_BACK, KeySelect},        // Create
-        {SDL_CONTROLLER_BUTTON_TOUCHPAD, kFastForwardFlag},
-        {SDL_CONTROLLER_BUTTON_DPAD_UP, KeyUp},
-        {SDL_CONTROLLER_BUTTON_DPAD_DOWN, KeyDown},
-        {SDL_CONTROLLER_BUTTON_DPAD_LEFT, KeyLeft},
-        {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, KeyRight},
-    };
-    static constexpr int kTriggerThreshold = 8000;  // L2/R2 count as pressed past ~25% travel
-    // Radial stick deadzone with hysteresis: the stick must pass 35% to start
-    // moving and drop below 25% to stop, so it doesn't flicker at the edge.
-    static constexpr double kStickPress = 0.35, kStickRelease = 0.25;
+    // Which keys and controller buttons press what is in settings_.bindings
+    // (changed on the Controls screen; defaults in controls.cpp).
     // Extra angle (radians, ~7 degrees) the stick must move past a sector
     // boundary before the direction changes. Stops jitter between straight
     // and diagonal movement.
@@ -495,34 +530,52 @@ private:
     // -----------------------------------------------------------------------
 
     void stepGame() {
-        u32 held = keyboardKeys_ | controllerKeys_;
+        const u32 held = heldControls();
+        // New presses: from key and button events (so a quick tap between
+        // two frames still counts), and L2/R2, which are polled.
+        const u32 pressed = tapped_ | (held & ~prevControls_);
+        prevControls_ = held;
+        tapped_ = 0;
+
+        if (pressed & controlBit(Control::SlowMotion)) toggleSlowMotion();
+        if (settings_.fastForwardToggle) {
+            if (pressed & controlBit(Control::FastForward)) fastForwardOn_ = !fastForwardOn_;
+            fastForwarding_ = fastForwardOn_;
+        } else {
+            fastForwarding_ = held & controlBit(Control::FastForward);
+        }
+
+        u32 game = (held | pressed) & kGameControls;
         if (suppressInput_) {
             // E.g. Cross was pressed to pick the game: don't also send A to it.
-            if (((held | tapped_) & 0x3FF) == 0) suppressInput_ = false;
-            held &= kFastForwardFlag;
-            tapped_ = 0;
+            if (game == 0) suppressInput_ = false;
+            game = 0;
         }
-        fastForwarding_ = held & kFastForwardFlag;
-        // Include buttons pressed and released since the last frame, so a
-        // quick tap is never missed by the game.
-        gba_->setKeys(cleanDirections(static_cast<u16>((held | tapped_) & 0x3FF)));
-        tapped_ = 0;
+        // Turbo buttons press for turboFrames frames, then release for as many.
+        // A new press starts on "pressed", so even a short tap registers.
+        if (pressed & (controlBit(Control::TurboA) | controlBit(Control::TurboB))) turboTick_ = 0;
+        const bool turboDown = (turboTick_++ / std::max(1, settings_.turboFrames)) % 2 == 0;
+        gba_->setKeys(cleanDirections(gbaKeys(game, turboDown)));
         const int framesToRun = fastForwarding_ ? settings_.fastForwardSpeed : 1;
         for (int i = 0; i < framesToRun; ++i) gba_->runFrame();
         queueAudio();
         frameDirty_ = true;
         drawGameFrame();
         if (fastForwarding_) drawFastForwardBadge();
+        else if (slowMotion_) drawSlowMotionBadge();
         drawToast();
         SDL_RenderPresent(renderer_);
 
         // Pace the emulator. With audio we wait until the queue drains;
         // that keeps sound smooth. Without audio we use the wall clock.
+        // In slow motion queueAudio stretches each frame's sound, so the
+        // same wait slows the game down too.
         if (!fastForwarding_) {
             if (audio_) {
                 while (SDL_GetQueuedAudioSize(audio_) > kTargetAudioQueue) SDL_Delay(1);
             } else {
-                nextFrame_ += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / 59.7275));
+                const double frameTime = (slowMotion_ ? kSlowMotionFactor : 1) / 59.7275;
+                nextFrame_ += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(frameTime));
                 std::this_thread::sleep_until(nextFrame_);
             }
         } else {
@@ -550,6 +603,8 @@ private:
     void resumeGame() {
         screen_ = Screen::Playing;
         suppressInput_ = true;
+        tapped_ = 0;
+        prevControls_ = heldControls();  // a button held from the menu isn't a new press
         nextFrame_ = Clock::now();
     }
 
@@ -576,12 +631,35 @@ private:
                 const int volume = settings_.volume;
                 for (s16& s : samples) s = static_cast<s16>(s * volume / 100);
             }
-            // While fast-forwarding, drop audio instead of building a backlog.
-            if (!fastForwarding_ || SDL_GetQueuedAudioSize(audio_) < kTargetAudioQueue) {
+            if (slowMotion_ && !fastForwarding_) {
+                // Play the sound slower (and lower, like a slowed-down tape):
+                // fill in extra samples on a straight line between each pair.
+                stretched_.clear();
+                stretched_.reserve(samples.size() * kSlowMotionFactor);
+                for (std::size_t i = 0; i + 1 < samples.size(); i += 2) {
+                    for (int step = 1; step <= kSlowMotionFactor; ++step)
+                        for (int ch = 0; ch < 2; ++ch)
+                            stretched_.push_back(static_cast<s16>(
+                                lastSample_[ch] + (samples[i + ch] - lastSample_[ch]) * step / kSlowMotionFactor));
+                    lastSample_[0] = samples[i];
+                    lastSample_[1] = samples[i + 1];
+                }
+                SDL_QueueAudio(audio_, stretched_.data(), static_cast<Uint32>(stretched_.size() * sizeof(s16)));
+            } else if (!fastForwarding_ || SDL_GetQueuedAudioSize(audio_) < kTargetAudioQueue) {
+                // While fast-forwarding, drop audio instead of building a backlog.
                 SDL_QueueAudio(audio_, samples.data(), static_cast<Uint32>(samples.size() * sizeof(s16)));
+            }
+            if (samples.size() >= 2) {
+                lastSample_[0] = samples[samples.size() - 2];
+                lastSample_[1] = samples[samples.size() - 1];
             }
         }
         samples.clear();
+    }
+
+    void toggleSlowMotion() {
+        slowMotion_ = !slowMotion_;
+        showToast(slowMotion_ ? "Slow motion on" : "Slow motion off");
     }
 
     // -----------------------------------------------------------------------
@@ -596,8 +674,8 @@ private:
         return keys;
     }
 
-    // With "Circle = A" on, the right face button acts as A and Cross as B,
-    // matching where A and B sit on a Nintendo pad.
+    // In menus, "Circle confirms" swaps Cross and Circle. (In games the
+    // Controls screen decides what each button does.)
     Uint8 physicalToLogical(Uint8 button) const {
         if (!settings_.circleIsA) return button;
         if (button == SDL_CONTROLLER_BUTTON_A) return SDL_CONTROLLER_BUTTON_B;
@@ -605,45 +683,89 @@ private:
         return button;
     }
 
-    u32 keyForButton(Uint8 button) const {
-        button = physicalToLogical(button);
-        for (const auto& binding : kButtonMap)
-            if (binding.button == button) return binding.key;
-        return 0;
-    }
-
     // Button glyphs for on-screen hints, following the confirm-button setting.
     const char* confirmGlyph() const { return settings_.circleIsA ? "\u25CB" : "\u2715"; }
     const char* backGlyph() const { return settings_.circleIsA ? "\u2715" : "\u25CB"; }
 
-    static u32 mapKey(SDL_Keycode key) {
-        switch (key) {
-        case SDLK_x: return KeyA;
-        case SDLK_z: return KeyB;
-        case SDLK_a: return KeyL;
-        case SDLK_s: return KeyR;
-        case SDLK_RETURN: return KeyStart;
-        case SDLK_BACKSPACE: case SDLK_RSHIFT: return KeySelect;
-        case SDLK_UP: return KeyUp;
-        case SDLK_DOWN: return KeyDown;
-        case SDLK_LEFT: return KeyLeft;
-        case SDLK_RIGHT: return KeyRight;
-        case SDLK_TAB: return kFastForwardFlag;
-        default: return 0;
-        }
+    // The controls a keyboard key or controller input is assigned to.
+    u32 controlsForKey(int key) const {
+        u32 controls = 0;
+        for (int c = 0; c < kControlCount; ++c)
+            for (int slot : settings_.bindings.keys[c])
+                if (slot == key) controls |= 1u << c;
+        return controls;
+    }
+
+    u32 controlsForPad(int input) const {
+        u32 controls = 0;
+        for (int c = 0; c < kControlCount; ++c)
+            for (int slot : settings_.bindings.pad[c])
+                if (slot == input) controls |= 1u << c;
+        return controls;
+    }
+
+    // Everything held right now, on the keyboard and the controller.
+    u32 heldControls() const {
+        u32 controls = padControls_;
+        for (int key : heldKeys_) controls |= controlsForKey(key);
+        return controls;
+    }
+
+    // The GBA buttons pressed by `controls`. Turbo buttons only press while
+    // `turboDown` (they flicker on and off).
+    static u16 gbaKeys(u32 controls, bool turboDown) {
+        static constexpr std::pair<Control, u16> kKeys[] = {
+            {Control::Up, KeyUp}, {Control::Down, KeyDown}, {Control::Left, KeyLeft}, {Control::Right, KeyRight},
+            {Control::A, KeyA}, {Control::B, KeyB}, {Control::L, KeyL}, {Control::R, KeyR},
+            {Control::Start, KeyStart}, {Control::Select, KeySelect},
+        };
+        u16 keys = 0;
+        for (const auto& [control, key] : kKeys)
+            if (controls & controlBit(control)) keys |= key;
+        if (turboDown && (controls & controlBit(Control::TurboA))) keys |= KeyA;
+        if (turboDown && (controls & controlBit(Control::TurboB))) keys |= KeyB;
+        return keys;
+    }
+
+    // How far L2 / R2 must be pressed to count, on SDL's 0-32767 scale.
+    int triggerThreshold() const { return settings_.triggerPoint * 32767 / 100; }
+
+    bool triggerDown(int side) const {
+        const auto axis = side == 0 ? SDL_CONTROLLER_AXIS_TRIGGERLEFT : SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+        return controller_ && SDL_GameControllerGetAxis(controller_, axis) > triggerThreshold();
+    }
+
+    bool padInputDown(int input) const {
+        if (!controller_ || input == kUnbound) return false;
+        if (input == kPadTriggerLeft) return triggerDown(0);
+        if (input == kPadTriggerRight) return triggerDown(1);
+        if (input < 0 || input >= SDL_CONTROLLER_BUTTON_MAX) return false;
+        return SDL_GameControllerGetButton(controller_, static_cast<SDL_GameControllerButton>(input));
     }
 
     void updateController() {
-        controllerKeys_ = 0;
+        padControls_ = 0;
+        padDirections_ = 0;
         if (!controller_) return;
-        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; ++button)
-            if (SDL_GameControllerGetButton(controller_, static_cast<SDL_GameControllerButton>(button)))
-                controllerKeys_ |= keyForButton(static_cast<Uint8>(button));
-        if (SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > kTriggerThreshold)
-            controllerKeys_ |= KeyL;
-        if (SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kTriggerThreshold)
-            controllerKeys_ |= KeyR;
-        controllerKeys_ |= stickDirection();
+        for (int c = 0; c < kControlCount; ++c)
+            for (int input : settings_.bindings.pad[c])
+                if (padInputDown(input)) padControls_ |= 1u << c;
+        const u32 stick = stickDirection();
+        if (settings_.leftStickDpad) {
+            if (stick & KeyUp) padControls_ |= controlBit(Control::Up);
+            if (stick & KeyDown) padControls_ |= controlBit(Control::Down);
+            if (stick & KeyLeft) padControls_ |= controlBit(Control::Left);
+            if (stick & KeyRight) padControls_ |= controlBit(Control::Right);
+        }
+        // Menus always follow the controller's own D-pad and left stick,
+        // whatever the game buttons are set to, so you can't get stuck.
+        padDirections_ = stick;
+        static constexpr std::pair<SDL_GameControllerButton, u32> kDpad[] = {
+            {SDL_CONTROLLER_BUTTON_DPAD_UP, KeyUp}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, KeyDown},
+            {SDL_CONTROLLER_BUTTON_DPAD_LEFT, KeyLeft}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, KeyRight},
+        };
+        for (const auto& [button, key] : kDpad)
+            if (SDL_GameControllerGetButton(controller_, button)) padDirections_ |= key;
     }
 
     // Turns the left stick into one of 8 D-pad directions. Checking each axis
@@ -656,7 +778,10 @@ private:
         };
         const double x = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0;
         const double y = -SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0;  // up = +
-        stickActive_ = std::hypot(x, y) > (stickActive_ ? kStickRelease : kStickPress);
+        // Radial dead zone with hysteresis: the stick must pass the dead zone
+        // to start moving and drop 10% below it to stop, so it doesn't flicker.
+        const double press = settings_.stickDeadzone / 100.0, release = std::max(0.05, press - 0.1);
+        stickActive_ = std::hypot(x, y) > (stickActive_ ? release : press);
         if (!stickActive_) {
             stickSector_ = -1;
             return 0;
@@ -678,10 +803,10 @@ private:
         int direction = 0;  // 0 = none, else 1 + index into kActions
         static constexpr MenuAction kActions[] = {MenuAction::Up, MenuAction::Down, MenuAction::Left,
                                                   MenuAction::Right};
-        if (controllerKeys_ & KeyUp) direction = 1;
-        else if (controllerKeys_ & KeyDown) direction = 2;
-        else if (controllerKeys_ & KeyLeft) direction = 3;
-        else if (controllerKeys_ & KeyRight) direction = 4;
+        if (padDirections_ & KeyUp) direction = 1;
+        else if (padDirections_ & KeyDown) direction = 2;
+        else if (padDirections_ & KeyLeft) direction = 3;
+        else if (padDirections_ & KeyRight) direction = 4;
         const Uint32 now = SDL_GetTicks();
         if (direction != navDirection_) {
             navDirection_ = direction;
@@ -721,7 +846,7 @@ private:
             switch (event.type) {
             case SDL_QUIT: running_ = false; break;
             case SDL_KEYDOWN: onKeyDown(event.key, actions); break;
-            case SDL_KEYUP: keyboardKeys_ &= ~mapKey(event.key.keysym.sym); break;
+            case SDL_KEYUP: std::erase(heldKeys_, static_cast<int>(event.key.keysym.sym)); break;
             case SDL_CONTROLLERBUTTONDOWN:
                 if (isOurController(event.cbutton.which)) onButtonDown(event.cbutton.button, actions);
                 break;
@@ -736,6 +861,7 @@ private:
                 break;
             case SDL_CONTROLLERDEVICEADDED:  // `which` is a device index here
                 if (!controller_) openController(event.cdevice.which);
+                macui::keepControllerButtonsFromSystem();
                 break;
             case SDL_CONTROLLERDEVICEREMOVED:  // `which` is an instance ID here
                 if (isOurController(event.cdevice.which)) {
@@ -750,19 +876,24 @@ private:
             }
         }
         updateController();
+        if (capturing_) {
+            updateCapture();
+            return;  // menus wait until the new key or button is picked
+        }
         if (screen_ != Screen::Playing) updateMenuRepeat(actions);
         if (introActive()) actions.clear();
         for (MenuAction action : actions) {
             if (screen_ == Screen::Library) libraryAction(action);
             else if (screen_ == Screen::Paused) pauseAction(action);
             else if (screen_ == Screen::Settings) settingsAction(action);
+            else if (screen_ == Screen::Controls) controlsAction(action);
         }
     }
 
     void onKeyDown(const SDL_KeyboardEvent& key, std::vector<MenuAction>& actions) {
         const SDL_Keycode sym = key.keysym.sym;
-        if (sym == SDLK_f || sym == SDLK_F11) {
-            if (!key.repeat) toggleFullscreen();
+        if (capturing_) {
+            if (!key.repeat) captureKey(key);
             return;
         }
         if (screen_ == Screen::Playing) {
@@ -770,31 +901,42 @@ private:
                 if (!key.repeat) pauseGame();
                 return;
             }
-            if (sym == SDLK_v) {  // cycle video filters (Shift+V goes backwards)
-                if (!key.repeat) {
-                    setVideoFilter(settings_.videoFilter + ((key.keysym.mod & KMOD_SHIFT) ? -1 : 1));
-                    showToast(std::string("Filter: ") + videoFilterName(currentFilter()));
-                }
+            // A key assigned on the Controls screen goes to the game, even if
+            // it's also a shortcut below. (Cmd shortcuts like Cmd+Q never do.)
+            const u32 controls = (key.keysym.mod & KMOD_GUI) ? 0 : controlsForKey(sym);
+            if (controls) {
+                if (std::find(heldKeys_.begin(), heldKeys_.end(), sym) == heldKeys_.end()) heldKeys_.push_back(sym);
+                if (!key.repeat) tapped_ |= controls;
                 return;
             }
-            if (sym >= SDLK_3 && sym <= SDLK_6) {  // smaller sizes are below the minimum window size
-                if (!key.repeat) setWindowScale(3 + (sym - SDLK_3));
-                return;
+            if (key.repeat) return;
+            if (sym == SDLK_f || sym == SDLK_F11) toggleFullscreen();
+            else if (sym == SDLK_v) {  // cycle video filters (Shift+V goes backwards)
+                setVideoFilter(settings_.videoFilter + ((key.keysym.mod & KMOD_SHIFT) ? -1 : 1));
+                showToast(std::string("Filter: ") + videoFilterName(currentFilter()));
+            } else if (sym >= SDLK_3 && sym <= SDLK_6) {  // smaller sizes are below the minimum window size
+                setWindowScale(3 + (sym - SDLK_3));
             }
-            keyboardKeys_ |= mapKey(sym);
-            if (!key.repeat) tapped_ |= mapKey(sym);
             return;
         }
-        // Menus. Up/down may auto-repeat; the rest only fire once per press.
+        if (sym == SDLK_f || sym == SDLK_F11) {
+            if (!key.repeat) toggleFullscreen();
+            return;
+        }
+        // Menus. Arrows may auto-repeat; the rest only fire once per press.
         if (sym == SDLK_UP) actions.push_back(MenuAction::Up);
         else if (sym == SDLK_DOWN) actions.push_back(MenuAction::Down);
         else if (sym == SDLK_LEFT) actions.push_back(MenuAction::Left);
         else if (sym == SDLK_RIGHT) actions.push_back(MenuAction::Right);
         if (key.repeat) return;
+        const bool controlsScreen = screen_ == Screen::Controls;
         switch (sym) {
         case SDLK_COMMA: actions.push_back(MenuAction::OpenSettings); break;  // also Cmd+, like other Mac apps
         case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_x: actions.push_back(MenuAction::Accept); break;
-        case SDLK_ESCAPE: case SDLK_BACKSPACE: case SDLK_z: actions.push_back(MenuAction::Back); break;
+        case SDLK_BACKSPACE: case SDLK_DELETE:
+            actions.push_back(controlsScreen ? MenuAction::Clear : MenuAction::Back);
+            break;
+        case SDLK_ESCAPE: case SDLK_z: actions.push_back(MenuAction::Back); break;
         case SDLK_o: actions.push_back(MenuAction::AddRoms); break;
         case SDLK_g: actions.push_back(MenuAction::OpenFolder); break;
         default: break;
@@ -802,10 +944,14 @@ private:
     }
 
     void onButtonDown(Uint8 button, std::vector<MenuAction>& actions) {
-        const bool menuButton = button == SDL_CONTROLLER_BUTTON_GUIDE || button == SDL_CONTROLLER_BUTTON_MISC1;
+        if (capturing_) {
+            capturePadButton(button);
+            return;
+        }
+        const bool menuButton = isReservedPadInput(button);  // PS or mic
         if (screen_ == Screen::Playing) {
             if (menuButton) pauseGame();
-            else tapped_ |= keyForButton(button);
+            else tapped_ |= controlsForPad(button);
             return;
         }
         if (menuButton) {
@@ -816,18 +962,24 @@ private:
         case SDL_CONTROLLER_BUTTON_BACK: actions.push_back(MenuAction::OpenSettings); break;  // Create
         case SDL_CONTROLLER_BUTTON_A: actions.push_back(MenuAction::Accept); break;        // Cross
         case SDL_CONTROLLER_BUTTON_B: actions.push_back(MenuAction::Back); break;          // Circle
-        case SDL_CONTROLLER_BUTTON_Y: actions.push_back(MenuAction::AddRoms); break;       // Triangle
+        case SDL_CONTROLLER_BUTTON_Y:                                                      // Triangle
+            actions.push_back(screen_ == Screen::Controls ? MenuAction::Clear : MenuAction::AddRoms);
+            break;
         case SDL_CONTROLLER_BUTTON_X: actions.push_back(MenuAction::OpenFolder); break;    // Square
         case SDL_CONTROLLER_BUTTON_START:
             actions.push_back(screen_ == Screen::Library ? MenuAction::Accept : MenuAction::Back);
             break;
-        default: break;  // up/down come from updateMenuRepeat
+        default: break;  // directions come from updateMenuRepeat
         }
     }
 
     void onMouseMove(float x, float y) {
         mouseX_ = x;
         mouseY_ = y;
+        if (screen_ == Screen::Controls) {
+            if (!capturing_) controlsHitTest(x, y, controlsRow_, controlsCol_);
+            return;
+        }
         if (screen_ == Screen::Settings) {
             for (int i = 0; i < static_cast<int>(SettingRow::Count); ++i)
                 if (settingsRowRect(i).contains(x, y)) settingsSelected_ = i;
@@ -840,6 +992,25 @@ private:
     }
 
     void onClick(float x, float y, int clicks) {
+        if (capturing_) {  // clicking anywhere cancels picking a key
+            stopCapture("");
+            return;
+        }
+        if (screen_ == Screen::Controls) {
+            int row = 0, col = 0;
+            if (!controlsHitTest(x, y, row, col)) return;
+            controlsRow_ = row;
+            controlsCol_ = col;
+            // On option rows the ‹ and › arrows step the value; elsewhere a click acts like Return.
+            if (row >= kControlCount && row < kControlCount + kControlOptionCount) {
+                const Rect r = controlsRowRect(row);
+                const Rect value = controlsValueArea(r);
+                if (x < value.x + 32) return controlsAction(MenuAction::Left);
+                if (x >= value.x + value.w - 32) return controlsAction(MenuAction::Right);
+            }
+            controlsAction(MenuAction::Accept);
+            return;
+        }
         if (screen_ == Screen::Paused) {
             const auto items = pauseItems();
             for (std::size_t i = 0; i < items.size(); ++i) {
@@ -880,10 +1051,16 @@ private:
     }
 
     void onWheel(const SDL_MouseWheelEvent& wheel) {
-        if (screen_ != Screen::Library) return;
+        if (screen_ != Screen::Library && screen_ != Screen::Controls) return;
         float amount = wheel.preciseY;
         if (wheel.direction == SDL_MOUSEWHEEL_FLIPPED) amount = -amount;
         wheelAccum_ += amount;
+        if (screen_ == Screen::Controls) {  // scroll the list without moving the selection
+            const int maxScroll = std::max(0, controlsRowCount() - controlsVisibleRows());
+            while (wheelAccum_ >= 1) { controlsScroll_ = std::max(0, controlsScroll_ - 1); wheelAccum_ -= 1; }
+            while (wheelAccum_ <= -1) { controlsScroll_ = std::min(maxScroll, controlsScroll_ + 1); wheelAccum_ += 1; }
+            return;
+        }
         while (wheelAccum_ >= 1) { libraryAction(MenuAction::Up); wheelAccum_ -= 1; }
         while (wheelAccum_ <= -1) { libraryAction(MenuAction::Down); wheelAccum_ += 1; }
     }
@@ -903,7 +1080,7 @@ private:
 
     void addRomsWithDialog() {
         const auto files = macui::chooseRomFiles();
-        keyboardKeys_ = 0;  // key-up events may have gone to the dialog
+        heldKeys_.clear();  // key-up events may have gone to the dialog
         std::string errors, lastAdded;
         for (const auto& file : files) {
             std::string error;
@@ -1020,14 +1197,31 @@ private:
         case SettingRow::VideoFilter: setVideoFilter(settings_.videoFilter + (step < 0 ? -1 : 1)); return;
         case SettingRow::Scaling: settings_.pixelPerfect = !settings_.pixelPerfect; break;
         case SettingRow::Fullscreen: toggleFullscreen(); return;  // saves by itself
-        case SettingRow::ConfirmButton: settings_.circleIsA = !settings_.circleIsA; break;
+        case SettingRow::Controls:
+            if (step == 0) openControls();
+            return;
+        case SettingRow::ConfirmButton: {
+            // If A and B are still on their default buttons, move them with
+            // the confirm button, so Circle confirms and is A (and back).
+            const Bindings before = Bindings::defaults(settings_.circleIsA);
+            settings_.circleIsA = !settings_.circleIsA;
+            const Bindings after = Bindings::defaults(settings_.circleIsA);
+            auto& pad = settings_.bindings.pad;
+            const int a = static_cast<int>(Control::A), b = static_cast<int>(Control::B);
+            if (pad[a] == before.pad[a] && pad[b] == before.pad[b]) {
+                pad[a] = after.pad[a];
+                pad[b] = after.pad[b];
+            }
+            break;
+        }
         case SettingRow::RomFolder: {
             if (step != 0) return;
             const std::string folder = macui::chooseFolder(library_.folder());
-            keyboardKeys_ = 0;  // key-up events may have gone to the dialog
+            heldKeys_.clear();  // key-up events may have gone to the dialog
             if (folder.empty() || folder == library_.folder()) return;
             library_.setFolder(folder);
             settings_.romFolder = folder == defaultRomFolder() ? "" : folder;
+            settings_.romFolderBookmark = settings_.romFolder.empty() ? "" : macui::makeFolderBookmark(folder);
             selected_ = 0;
             scrollTop_ = 0;
             break;
@@ -1061,7 +1255,8 @@ private:
         case SettingRow::VideoFilter: return "Video filter";
         case SettingRow::Scaling: return "Screen scaling";
         case SettingRow::Fullscreen: return "Full screen";
-        case SettingRow::ConfirmButton: return "Controller A button";
+        case SettingRow::Controls: return "Controls";
+        case SettingRow::ConfirmButton: return "Menu confirm button";
         case SettingRow::RomFolder: return "Games folder";
         case SettingRow::Done: return "Done";
         case SettingRow::Count: break;
@@ -1084,6 +1279,7 @@ private:
         case SettingRow::Scaling: return settings_.pixelPerfect ? "Whole-number" : "Fill window";
         case SettingRow::Fullscreen:
             return (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? "On" : "Off";
+        case SettingRow::Controls: return "Keyboard & controller \u203A";
         case SettingRow::ConfirmButton: return settings_.circleIsA ? "Circle \u25CB" : "Cross \u2715";
         case SettingRow::RomFolder: return shortPath(library_.folder());
         default: return "";
@@ -1092,7 +1288,195 @@ private:
 
     // Rows that take left/right show ‹ › arrows around the value.
     static bool hasArrows(SettingRow row) {
-        return row != SettingRow::RomFolder && row != SettingRow::Done;
+        return row != SettingRow::RomFolder && row != SettingRow::Done && row != SettingRow::Controls;
+    }
+
+    // -----------------------------------------------------------------------
+    // Controls screen (opened from Settings)
+    // -----------------------------------------------------------------------
+    //
+    // One row per control with four cells: two keyboard keys and two
+    // controller buttons. Pick a cell and press Return (or Cross), then the
+    // key or button to use. Below them are options for the stick, triggers,
+    // turbo and fast-forward, then "Reset to defaults" and "Done".
+
+    int controlsRowCount() const { return kControlCount + kControlOptionCount + 1; }
+    bool isBindingRow(int row) const { return row < kControlCount; }
+    bool isOptionRow(int row) const { return row >= kControlCount && row < kControlCount + kControlOptionCount; }
+    bool isButtonsRow(int row) const { return row == controlsRowCount() - 1; }
+    bool captureIsKeyboard() const { return controlsCol_ < kBindingSlots; }
+
+    void openControls() {
+        screen_ = Screen::Controls;
+        controlsRow_ = controlsCol_ = controlsScroll_ = 0;
+        capturing_ = false;
+    }
+
+    void closeControls() {
+        capturing_ = false;
+        screen_ = Screen::Settings;
+        settingsSelected_ = static_cast<int>(SettingRow::Controls);
+    }
+
+    void controlsAction(MenuAction action) {
+        const int count = controlsRowCount();
+        switch (action) {
+        case MenuAction::Up: controlsRow_ = (controlsRow_ + count - 1) % count; break;
+        case MenuAction::Down: controlsRow_ = (controlsRow_ + 1) % count; break;
+        case MenuAction::Left:
+        case MenuAction::Right: {
+            const int step = action == MenuAction::Left ? -1 : 1;
+            if (isOptionRow(controlsRow_)) changeControlOption(controlOption(controlsRow_), step);
+            else controlsCol_ += step;
+            break;
+        }
+        case MenuAction::Accept:
+            if (isBindingRow(controlsRow_)) startCapture();
+            else if (isOptionRow(controlsRow_)) changeControlOption(controlOption(controlsRow_), 0);
+            else if (controlsCol_ == 0) {
+                settings_.resetControls();
+                fastForwardOn_ = false;
+                saveSettings();
+                showToast("Controls reset to defaults");
+            } else {
+                closeControls();
+            }
+            break;
+        case MenuAction::Clear:
+            if (isBindingRow(controlsRow_)) {
+                int& slot = captureIsKeyboard() ? settings_.bindings.keys[controlsRow_][controlsCol_]
+                                                : settings_.bindings.pad[controlsRow_][controlsCol_ - kBindingSlots];
+                if (slot != kUnbound) {
+                    slot = kUnbound;
+                    saveSettings();
+                }
+            }
+            break;
+        case MenuAction::Back: case MenuAction::OpenSettings: closeControls(); break;
+        default: break;
+        }
+        controlsCol_ = std::clamp(controlsCol_, 0, isButtonsRow(controlsRow_) ? 1 : 2 * kBindingSlots - 1);
+    }
+
+    static ControlOption controlOption(int row) { return static_cast<ControlOption>(row - kControlCount); }
+
+    static const char* controlOptionLabel(ControlOption option) {
+        switch (option) {
+        case ControlOption::StickDpad: return "Left stick as D-pad";
+        case ControlOption::StickDeadzone: return "Stick dead zone";
+        case ControlOption::TriggerPoint: return "L2 / R2 press point";
+        case ControlOption::TurboSpeed: return "Turbo speed";
+        case ControlOption::FastForwardMode: return "Fast-forward button";
+        case ControlOption::Count: break;
+        }
+        return "";
+    }
+
+    std::string controlOptionValue(ControlOption option) const {
+        switch (option) {
+        case ControlOption::StickDpad: return settings_.leftStickDpad ? "On" : "Off";
+        case ControlOption::StickDeadzone: return std::to_string(settings_.stickDeadzone) + "%";
+        case ControlOption::TriggerPoint: return std::to_string(settings_.triggerPoint) + "%";
+        case ControlOption::TurboSpeed: {
+            // A turbo press lasts turboFrames frames, then the release as long: 60 / (2 * frames) a second.
+            const int f = settings_.turboFrames;
+            return (f == 4 ? std::string("7.5") : std::to_string(30 / f)) + " presses/s";
+        }
+        case ControlOption::FastForwardMode: return settings_.fastForwardToggle ? "Press to toggle" : "Hold";
+        case ControlOption::Count: break;
+        }
+        return "";
+    }
+
+    // `step` is -1 (left), +1 (right) or 0 (Return: next value, wrapping around).
+    void changeControlOption(ControlOption option, int step) {
+        auto percent = [step](int& value, int low, int high) {
+            if (step == 0) value = value + 5 > high ? low : value + 5;
+            else value = std::clamp(value + step * 5, low, high);
+        };
+        switch (option) {
+        case ControlOption::StickDpad: settings_.leftStickDpad = !settings_.leftStickDpad; break;
+        case ControlOption::StickDeadzone: percent(settings_.stickDeadzone, 10, 80); break;
+        case ControlOption::TriggerPoint: percent(settings_.triggerPoint, 5, 95); break;
+        case ControlOption::TurboSpeed: {
+            // Right = faster = fewer frames per press. The list is slowest first.
+            static constexpr int kSlowestFirst[] = {6, 4, 3, 2, 1};
+            constexpr int n = static_cast<int>(std::size(kSlowestFirst));
+            int i = 0;
+            for (int k = 0; k < n; ++k)
+                if (kSlowestFirst[k] == settings_.turboFrames) i = k;
+            i = step == 0 ? (i + 1) % n : std::clamp(i + step, 0, n - 1);
+            settings_.turboFrames = kSlowestFirst[i];
+            break;
+        }
+        case ControlOption::FastForwardMode:
+            settings_.fastForwardToggle = !settings_.fastForwardToggle;
+            fastForwardOn_ = false;
+            break;
+        case ControlOption::Count: return;
+        }
+        saveSettings();
+    }
+
+    // ---- Picking a new key or button ----
+
+    void startCapture() {
+        capturing_ = true;
+        captureUntil_ = SDL_GetTicks() + 8000;  // give up after 8 seconds
+        captureTriggerDown_[0] = triggerDown(0);
+        captureTriggerDown_[1] = triggerDown(1);
+    }
+
+    void stopCapture(const std::string& message) {
+        capturing_ = false;
+        if (!message.empty()) showToast(message);
+    }
+
+    // L2 and R2 are axes, so they are watched here rather than through button events.
+    void updateCapture() {
+        if (SDL_TICKS_PASSED(SDL_GetTicks(), captureUntil_)) return stopCapture("Nothing changed");
+        if (captureIsKeyboard()) return;
+        for (int side = 0; side < 2; ++side) {
+            const bool down = triggerDown(side);
+            if (down && !captureTriggerDown_[side]) return assignBinding(side == 0 ? kPadTriggerLeft : kPadTriggerRight);
+            if (!down) captureTriggerDown_[side] = false;  // was held at the start: wait for a fresh press
+        }
+    }
+
+    void captureKey(const SDL_KeyboardEvent& key) {
+        const SDL_Keycode sym = key.keysym.sym;
+        if (sym == SDLK_ESCAPE) return stopCapture("");  // Esc cancels, and always opens the pause menu in games
+        if (key.keysym.mod & KMOD_GUI) return;           // leave Cmd shortcuts (like Cmd+Q) alone
+        if (!captureIsKeyboard()) return;                // waiting for a controller button
+        assignBinding(sym);
+    }
+
+    void capturePadButton(Uint8 button) {
+        if (isReservedPadInput(button)) return stopCapture("");  // PS / mic cancel; they always open the menu
+        if (captureIsKeyboard()) return;                         // waiting for a key
+        assignBinding(button);
+    }
+
+    // Puts `input` in the selected cell. Each key or button does one thing,
+    // so it's taken off any other control it was on.
+    void assignBinding(int input) {
+        const bool keyboard = captureIsKeyboard();
+        auto& table = keyboard ? settings_.bindings.keys : settings_.bindings.pad;
+        const int control = controlsRow_, slot = controlsCol_ % kBindingSlots;
+        std::string movedFrom;
+        for (int c = 0; c < kControlCount; ++c) {
+            for (int s = 0; s < kBindingSlots; ++s) {
+                if (table[c][s] != input || (c == control && s == slot)) continue;
+                table[c][s] = kUnbound;
+                if (c != control) movedFrom = controlName(static_cast<Control>(c));
+            }
+        }
+        table[control][slot] = input;
+        saveSettings();
+        const std::string label = keyboard ? keyLabel(input) : padLabel(input);
+        const std::string name = controlName(static_cast<Control>(control));
+        stopCapture(movedFrom.empty() ? label + " \u2192 " + name
+                                      : label + " \u2192 " + name + " (moved from " + movedFrom + ")");
     }
 
     // -----------------------------------------------------------------------
@@ -1221,8 +1605,13 @@ private:
         if (width(result) > maxWidth) {
             std::string base = text;
             while (!base.empty()) {
-                do base.pop_back();  // drop a whole UTF-8 character
-                while (!base.empty() && (static_cast<unsigned char>(base.back()) & 0xC0) == 0x80);
+                // Drop one whole UTF-8 character: its continuation bytes
+                // (10xxxxxx) and then the byte that starts it.
+                while (!base.empty()) {
+                    const unsigned char byte = static_cast<unsigned char>(base.back());
+                    base.pop_back();
+                    if ((byte & 0xC0) != 0x80) break;
+                }
                 if (width(base + "\u2026") <= maxWidth) break;
             }
             result = base + "\u2026";
@@ -1697,6 +2086,13 @@ private:
         drawTextIn(box, "\u25B6\u25B6", 13, palette::kGoldLight, true, Align::Center);
     }
 
+    // Shown in the same corner while slow motion is on.
+    void drawSlowMotionBadge() {
+        const Rect box{14, 12, 52, 30};
+        drawPixelBox(box, palette::kPanelSolid, withAlpha(palette::kGold, 0.6));
+        drawTextIn(box, "\u00BD\u00D7", 14, palette::kGoldLight, true, Align::Center);
+    }
+
     void setVideoFilter(int filter) {
         settings_.videoFilter = (filter + kVideoFilterCount) % kVideoFilterCount;
         frameDirty_ = true;
@@ -1930,16 +2326,23 @@ private:
         Rect left, value, right;
     };
 
+    // Space between settings rows: 42 points, less in short windows so every row fits.
+    float settingsPitch() const {
+        const float fit = (windowRect().h - 24 - 70 - 52) / static_cast<int>(SettingRow::Count);
+        return std::clamp(std::floor(fit), 34.0f, 42.0f);
+    }
+
     Rect settingsPanel() const {
         const Rect win = windowRect();
         const float w = std::min(580.0f, win.w - 48);
-        const float h = 70 + static_cast<int>(SettingRow::Count) * 42.0f + 52;
+        const float h = 70 + static_cast<int>(SettingRow::Count) * settingsPitch() + 52;
         return {(win.w - w) / 2, (win.h - h) / 2, w, h};
     }
 
     Rect settingsRowRect(int i) const {
         const Rect panel = settingsPanel();
-        return {panel.x + 18, panel.y + 64 + i * 42.0f, panel.w - 36, 38};
+        const float pitch = settingsPitch();
+        return {panel.x + 18, panel.y + 64 + i * pitch, panel.w - 36, pitch - 4};
     }
 
     // The value sits in the right half of a row, between ‹ and › click targets.
@@ -1987,6 +2390,196 @@ private:
             controller_ ? std::vector<Hint>{{"\u2190 \u2192", "Change"}, {confirmGlyph(), "Select"}, {backGlyph(), "Back"}}
                         : std::vector<Hint>{{"\u2190 \u2192", "Change"}, {"Return", "Select"}, {"Esc", "Back"}};
         drawHints(hints, panel.x + panel.w / 2, panel.y + panel.h - 30, panel.w - 24, Align::Center);
+    }
+
+    // ---- Controls ----
+
+    static constexpr float kControlsPitch = 34;
+
+    Rect controlsPanel() const {
+        const Rect win = windowRect();
+        const float w = std::min(780.0f, win.w - 48);
+        const float content = 92 + controlsRowCount() * kControlsPitch + 62;
+        const float h = std::min(content, win.h - 32);
+        return {(win.w - w) / 2, (win.h - h) / 2, w, h};
+    }
+
+    float controlsListTop() const { return controlsPanel().y + 92; }
+
+    int controlsVisibleRows() const {
+        const Rect panel = controlsPanel();
+        const float height = panel.y + panel.h - 62 - controlsListTop();
+        return std::max(1, static_cast<int>(height / kControlsPitch));
+    }
+
+    // Keeps the selected row on screen.
+    void scrollControlsToSelection() {
+        const int visible = controlsVisibleRows();
+        if (controlsRow_ < controlsScroll_) controlsScroll_ = controlsRow_;
+        if (controlsRow_ >= controlsScroll_ + visible) controlsScroll_ = controlsRow_ - visible + 1;
+        controlsScroll_ = std::clamp(controlsScroll_, 0, std::max(0, controlsRowCount() - visible));
+    }
+
+    Rect controlsRowRect(int row) const {
+        const Rect panel = controlsPanel();
+        const float y = controlsListTop() + (row - controlsScroll_) * kControlsPitch;
+        return {panel.x + 18, y, panel.w - 36 - 10, kControlsPitch - 4};
+    }
+
+    // Everything right of the row's label: the four cells, or an option's value.
+    static Rect controlsValueArea(const Rect& row) {
+        const float labelW = std::max(132.0f, row.w * 0.27f);
+        return {row.x + labelW, row.y, row.w - labelW - 4, row.h};
+    }
+
+    // Cells 0-1 are keyboard keys, 2-3 controller buttons (a wider gap between the groups).
+    static Rect controlsCellRect(const Rect& row, int col) {
+        const Rect area = controlsValueArea(row);
+        constexpr float kGap = 6, kGroupGap = 16;
+        const float w = (area.w - 2 * kGap - kGroupGap) / 4;
+        const float x = area.x + col * (w + kGap) + (col >= 2 ? kGroupGap - kGap : 0);
+        return {x, row.y + 2, w, row.h - 4};
+    }
+
+    Rect controlsButtonRect(int col) const {
+        const Rect row = controlsRowRect(controlsRowCount() - 1);
+        constexpr float kResetW = 190, kDoneW = 140, kGap = 14;
+        const float x = row.x + (row.w - (kResetW + kGap + kDoneW)) / 2;
+        return col == 0 ? Rect{x, row.y, kResetW, row.h} : Rect{x + kResetW + kGap, row.y, kDoneW, row.h};
+    }
+
+    // The row (and cell or button) under (x, y). Returns false if there's none.
+    bool controlsHitTest(float x, float y, int& row, int& col) const {
+        const int visible = controlsVisibleRows();
+        for (int r = controlsScroll_; r < std::min(controlsRowCount(), controlsScroll_ + visible); ++r) {
+            const Rect rect = controlsRowRect(r);
+            if (!rect.contains(x, y)) continue;
+            if (isButtonsRow(r)) {
+                for (int c = 0; c < 2; ++c) {
+                    if (controlsButtonRect(c).contains(x, y)) {
+                        row = r;
+                        col = c;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            row = r;
+            if (isBindingRow(r)) {
+                for (int c = 0; c < 2 * kBindingSlots; ++c)
+                    if (controlsCellRect(rect, c).contains(x, y)) col = c;
+                col = std::clamp(col, 0, 2 * kBindingSlots - 1);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void drawControls() {
+        const bool overGame = settingsReturn_ == Screen::Paused && gba_;
+        if (overGame) dimGame();
+        else drawScene();
+        scrollControlsToSelection();
+        const Rect panel = controlsPanel();
+        drawPixelBox(panel, overGame ? palette::kPanelSolid : palette::kPanel, palette::kBorder, 3);
+        drawMenuTitle(panel, "Controls");
+
+        // Column headings over the cells.
+        const Rect first = controlsRowRect(controlsScroll_);
+        const Rect headerRow{first.x, panel.y + 64, first.w, 22};
+        const Rect k0 = controlsCellRect(headerRow, 0), k1 = controlsCellRect(headerRow, 1);
+        const Rect p0 = controlsCellRect(headerRow, 2), p1 = controlsCellRect(headerRow, 3);
+        const char* keyboardTitle = "K\u2009E\u2009Y\u2009B\u2009O\u2009A\u2009R\u2009D";
+        const char* controllerTitle = "C\u2009O\u2009N\u2009T\u2009R\u2009O\u2009L\u2009L\u2009E\u2009R";
+        drawTextIn({k0.x, headerRow.y, k1.x + k1.w - k0.x, 22}, keyboardTitle, 10, palette::kTextDim, true,
+                   Align::Center);
+        drawTextIn({p0.x, headerRow.y, p1.x + p1.w - p0.x, 22}, controllerTitle, 10, palette::kTextDim, true,
+                   Align::Center);
+
+        const int visible = controlsVisibleRows();
+        const double blink = 0.5 + 0.5 * std::sin(animTime() * 6);
+        for (int row = controlsScroll_; row < std::min(controlsRowCount(), controlsScroll_ + visible); ++row) {
+            const Rect r = controlsRowRect(row);
+            const bool selectedRow = row == controlsRow_;
+            if (isButtonsRow(row)) {
+                for (int c = 0; c < 2; ++c) {
+                    const Rect b = controlsButtonRect(c);
+                    const char* label = c == 0 ? "Reset to defaults" : "Done";
+                    if (selectedRow && controlsCol_ == c) drawGoldButton(b, label, 14, false);
+                    else drawButton(b, label);
+                }
+                continue;
+            }
+            if (isOptionRow(row)) {
+                if (row == kControlCount) fill({r.x, r.y - 3, r.w, 1}, palette::kBorder);  // divider above the options
+                if (selectedRow) drawSelection(r);
+                const ControlOption option = controlOption(row);
+                drawTextIn(r, controlOptionLabel(option), 14, selectedRow ? palette::kText : palette::kTextDim,
+                           selectedRow, Align::Left, 24);
+                const Rect value = controlsValueArea(r);
+                drawTextIn(value, controlOptionValue(option), 14, selectedRow ? palette::kGoldLight : palette::kText,
+                           true, Align::Center);
+                const Color arrow = selectedRow ? palette::kGold : withAlpha(palette::kTextDim, 0.7);
+                drawTextIn({value.x, r.y, 32, r.h}, "\u2039", 20, arrow, true, Align::Center);
+                drawTextIn({value.x + value.w - 32, r.y, 32, r.h}, "\u203A", 20, arrow, true, Align::Center);
+                continue;
+            }
+
+            // A control and its four cells.
+            if (selectedRow) {
+                drawPixelBox(r, palette::kPanelHover);
+                drawCursor(r.x + 8, r.y + r.h / 2);
+            }
+            drawTextIn(r, controlName(static_cast<Control>(row)), 14, selectedRow ? palette::kText : palette::kTextDim,
+                       selectedRow, Align::Left, 24);
+            for (int col = 0; col < 2 * kBindingSlots; ++col) {
+                const Rect cell = controlsCellRect(r, col);
+                const bool selected = selectedRow && col == controlsCol_;
+                const int input = col < kBindingSlots ? settings_.bindings.keys[row][col]
+                                                      : settings_.bindings.pad[row][col - kBindingSlots];
+                if (selected && capturing_) {
+                    drawPixelBox(cell, withAlpha(palette::kGold, 0.18 + 0.2 * blink), palette::kGold);
+                    std::string prompt = col < kBindingSlots ? "Press a key\u2026" : "Press a button\u2026";
+                    if (textWidth(prompt, 12, true) > cell.w - 8) prompt = "Press\u2026";  // narrow window
+                    drawTextIn(cell, prompt, 12, palette::kGoldLight, true, Align::Center);
+                    continue;
+                }
+                if (selected) drawPixelBox(cell, palette::kPanelHover, palette::kGold);
+                else drawPixelBox(cell, {255, 255, 255, 14}, {255, 255, 255, 30});
+                const std::string label = col < kBindingSlots ? keyLabel(input) : padLabel(input);
+                if (label.empty()) {
+                    drawTextIn(cell, "\u2014", 13, withAlpha(palette::kTextDim, 0.5), false, Align::Center);
+                } else {
+                    drawTextIn(cell, fitText(label, 13, true, cell.w - 10), 13,
+                               selected ? palette::kGoldLight : palette::kText, true, Align::Center);
+                }
+            }
+        }
+
+        if (controlsRowCount() > visible) {  // scrollbar
+            const Rect track{panel.x + panel.w - 18 - 4, controlsListTop(), 4, visible * kControlsPitch - 4};
+            fill(track, {255, 255, 255, 20});
+            const float thumbH = std::max(24.0f, track.h * visible / controlsRowCount());
+            const float thumbY =
+                track.y + (track.h - thumbH) * controlsScroll_ / std::max(1, controlsRowCount() - visible);
+            fill({track.x, thumbY, track.w, thumbH}, withAlpha(palette::kGold, 0.75));
+        }
+
+        std::vector<Hint> hints;
+        if (capturing_) {
+            if (!captureIsKeyboard() && controller_) hints.push_back({"PS", "Cancel"});
+            hints.push_back({"Esc", "Cancel"});
+        } else if (isBindingRow(controlsRow_)) {
+            hints = controller_ ? std::vector<Hint>{{confirmGlyph(), "Change"}, {"\u25B3", "Clear"},
+                                                    {backGlyph(), "Back"}}
+                                : std::vector<Hint>{{"Return", "Change"}, {"\u232B", "Clear"}, {"Esc", "Back"}};
+        } else if (isOptionRow(controlsRow_)) {
+            hints = {{"\u2190 \u2192", "Change"}, {controller_ ? backGlyph() : "Esc", "Back"}};
+        } else {
+            hints = {{controller_ ? confirmGlyph() : "Return", "Select"}, {controller_ ? backGlyph() : "Esc", "Back"}};
+        }
+        drawHints(hints, panel.x + panel.w / 2, panel.y + panel.h - 30, panel.w - 24, Align::Center);
+        drawToast();
     }
 
     void drawGameList(const LibraryLayout& l) {
@@ -2134,6 +2727,16 @@ public:
             settingsReturn_ = Screen::Library;
             settingsSelected_ = static_cast<int>(SettingRow::VideoFilter);
             shot("settings", [&] { drawSettings(); });
+            screen_ = Screen::Controls;
+            controlsRow_ = static_cast<int>(Control::R);
+            controlsCol_ = 3;
+            controlsScroll_ = 0;
+            shot("controls", [&] { drawControls(); });
+            capturing_ = true;
+            shot("controls-capture", [&] { drawControls(); });
+            capturing_ = false;
+            controlsRow_ = kControlCount + static_cast<int>(ControlOption::TurboSpeed);
+            shot("controls-options", [&] { drawControls(); });
             if (gba_) {
                 screen_ = Screen::Paused;
                 pauseSelected_ = 0;

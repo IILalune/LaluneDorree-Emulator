@@ -31,7 +31,7 @@ it models, so it doubles as a guide to how the GBA works.
 - **HD video filters** that upscale the 240x160 screen, up to 1920x1280 with Super HD.
 - **Battery saves** (EEPROM and SRAM) written automatically while you play.
 - **PS5 DualSense controller** support over USB-C or Bluetooth, plus full keyboard controls.
-- **Fast-forward** at up to 8x.
+- **Fast-forward** at up to 8x, and **slow motion** at half speed.
 - **Full screen** and resizable windows, with sharp whole-number scaling or fill-the-window.
 - **A dreamy night-sky look** that matches the golden moon icon: twinkling stars, drifting
   pixel-art clouds, gold highlights, and a short intro where the moon rises (press any key to skip).
@@ -61,10 +61,27 @@ After that it opens normally, like any other app.
 
 ### Where your games go
 
-The installed app keeps its library in `~/Library/Application Support/LaLuneDoree/Games/`. Add
-games by dragging `.gba` files onto the app's window, or with **Insert Game…** / **Add ROMs…**.
-To copy files in with Finder, click **Open Folder** in the library. You can pick a different
-folder under Settings > Games folder.
+The installed app keeps its library in a `Games` folder inside its sandbox folder (see
+[Security and privacy](#security-and-privacy)). Add games by dragging `.gba` files onto the app's
+window, or with **Insert Game…** / **Add ROMs…**. To copy files in with Finder, click
+**Open Folder** in the library. You can pick a different folder under Settings > Games folder.
+
+### Security and privacy
+
+ROMs from the internet can be made to attack emulators, so the app is built to keep them boxed in:
+
+- **No internet.** The app never connects to anything and collects no data.
+- **App Sandbox.** macOS shuts the installed app in its own folder,
+  `~/Library/Containers/dev.lalunedoree.emulator/`. Outside it, the app can only open files and
+  folders you pick or drag onto it. It can't see your documents, photos or other apps, or use the
+  camera or microphone.
+- **Hardened runtime.** macOS stops other programs from injecting code into the app.
+- **Memory checks.** If a ROM triggers a bug that would read or write outside the emulator's
+  memory, the app stops instead.
+
+The first time you open this version, macOS moves your saves, settings and games from
+`~/Library/Application Support/LaLuneDoree/` into the sandbox folder. If you'd picked your own
+games folder, pick it again under Settings > Games folder so the app is allowed to open it.
 
 ## Build from source
 
@@ -132,7 +149,8 @@ or from the pause menu while you're playing. Changes apply right away.
 | Video filter | Pixel perfect, Smooth HD, Cinematic HD, Retro LCD, Super HD, Retro CRT, LCD Bloom |
 | Screen scaling | Whole-number (sharpest) or Fill window |
 | Full screen | On / Off (remembered between launches) |
-| Controller A button | Cross ✕ (PlayStation style) or Circle ○ (Nintendo position) |
+| Controls | Opens the Controls screen (see [Changing the controls](#changing-the-controls)) |
+| Menu confirm button | Cross ✕ (PlayStation style) or Circle ○ (Nintendo position) |
 | Games folder | Choose where your games are kept |
 
 Use ← → to change a value, Return / ✕ to select, and Esc / ○ to go back. With a mouse, click the
@@ -157,15 +175,19 @@ a game slows down on your Mac, use Smooth HD instead.
 
 ### Controls
 
+These are the default controls. You can change all of them except the pause menu, full screen and
+window size keys (see below).
+
 | GBA          | Keyboard                 | PS5 DualSense controller        |
 |--------------|--------------------------|---------------------------------|
 | D-pad        | Arrow keys               | D-pad / left stick              |
-| A            | X                        | Cross ✕ (Circle ○ if swapped)   |
+| A            | X                        | Cross ✕                         |
 | B            | Z                        | Square □ or Circle ○            |
 | L / R        | A / S                    | L1 or L2 / R1 or R2             |
 | Start        | Return                   | Options                         |
 | Select       | Backspace or Right Shift | Create                          |
 | Fast-forward | Hold Tab                 | Hold touchpad click             |
+| Slow motion  | `` ` `` (toggle)         | R3, right stick click (toggle)  |
 | Pause menu   | Esc                      | PS button or mic button         |
 | Full screen  | F or F11                 |                                 |
 | Window size  | 3–6 (3x to 6x)           |                                 |
@@ -178,11 +200,45 @@ Only the PS5 DualSense is supported. SDL may detect other controllers, such as X
 button mapping and on-screen prompts (✕ ○ □ △) are made for PlayStation and haven't been tested
 with anything else.
 
+The PS button opens the emulator's pause menu. While the app is in front, it asks macOS not to open
+its Games overlay (or Launchpad) for that button.
+
+### Changing the controls
+
+Open **Settings > Controls**. Each control has two keyboard keys and two controller buttons:
+
+1. Pick a cell with the arrow keys (or the D-pad), or click it.
+2. Press Return (or ✕), then press the key or button you want. Esc cancels.
+3. Backspace (or △) clears the selected cell.
+
+A key or button can only do one thing, so assigning it moves it from wherever it was before, and
+a message says so. **Reset to defaults** puts everything back. The menus always use the arrow keys,
+Return and Esc on the keyboard, and the D-pad, left stick, ✕ and ○ on the controller, so you can't
+lock yourself out. The PS and mic buttons always open the pause menu and can't be assigned.
+
+Besides the GBA buttons you can assign:
+
+- **Turbo A** and **Turbo B**: press A or B over and over while held. Nothing is assigned by default.
+- **Fast-forward** and **Slow motion**.
+
+Controller options, below the list:
+
+| Option | What it does |
+|--------|--------------|
+| Left stick as D-pad | On: the left stick moves like the D-pad in games. Off: only the buttons you assign |
+| Stick dead zone | How far (10–80%) you push the stick before it counts. Raise it if a worn stick drifts |
+| L2 / R2 press point | How far (5–95%) you press L2 or R2 before it counts |
+| Turbo speed | 5, 7.5, 10, 15 or 30 presses a second |
+| Fast-forward button | Hold, or press once to start and again to stop |
+
 ### Saves and settings
 
-Saves go to `~/Library/Application Support/LaLuneDoree/<game code>.sav` a couple of seconds after
-the game saves, and again when you quit. Settings are in `settings.ini` in the same folder. To back
-up your progress, copy that folder.
+Saves go to `<game code>.sav` files a couple of seconds after the game saves, and again when you
+quit. Settings are in `settings.ini` in the same folder. That folder is
+`~/Library/Containers/dev.lalunedoree.emulator/Data/Library/Application Support/LaLuneDoree/` for
+the installed app, and `~/Library/Application Support/LaLuneDoree/` for an app you built yourself.
+To back up your progress, copy that folder. Files are written to a temporary copy first, so a crash
+or a full disk can't leave a broken save behind.
 
 ## Compatibility
 
@@ -246,7 +302,9 @@ The script builds an app that's different from your everyday `build/` one:
 - SDL2 is downloaded (checked against its published SHA-256), built, and linked into the app, so
   people don't need Homebrew.
 - It's a universal app (Apple Silicon + Intel) that runs on macOS 11 or later.
-- Games are kept in `~/Library/Application Support/LaLuneDoree/Games/`.
+- It runs in the App Sandbox (permissions in `assets/LaLuneDoree.entitlements`) with the hardened
+  runtime. `assets/container-migration.plist` moves older versions' data into the sandbox.
+- Games are kept in the `Games` folder next to the saves.
 - The DMG opens on a window with the app, an Applications shortcut, and a golden arrow between them.
   The script asks Finder to lay out that window, so the first time you run it macOS may ask you to
   let Terminal (or your editor) control Finder. Allow it.
@@ -305,6 +363,7 @@ Read the files roughly in this order. Each one starts with a comment explaining 
 | `timers`, `dma` | Hardware timers, memory-copy engine | edge detection, callbacks between components |
 | `backup.hpp/.cpp` | EEPROM and SRAM save chips | state machines, `enum class` |
 | `main.cpp` | macOS window, input, audio, library and settings screens (SDL2) | RAII (destructors free resources), `std::unique_ptr`, `std::optional` |
+| `controls.hpp/.cpp` | Which keys and buttons press what, and their names | `std::array`, `enum class` used as an index |
 | `settings.hpp/.cpp` | Saved user preferences | `static` factory functions, simple file parsing, defaults via member initialisers |
 | `library.hpp/.cpp` | The games folder | `std::filesystem`, `std::optional` for "might fail" results |
 | `video_filters.hpp/.cpp` | HD upscaling and screen effects | lookup tables, templates with `if constexpr`, multithreading with Grand Central Dispatch |
@@ -337,16 +396,35 @@ The app icon is drawn by `tools/make_icon.py`. Edit it and run it to regenerate 
 ## Credits
 
 LaLune Dorée Emulator was created by Paul Hoang and built with **[Kiro](https://kiro.dev)**, an AI
-development environment. Kiro worked with Paul Hoang on the emulator core, the macOS app, the HD video
-filters, the pixel-art icon, and the DMG installer.
+development environment from Amazon Web Services. Kiro worked with Paul Hoang on the emulator core,
+the macOS app, the HD video filters, the pixel-art icon, and the DMG installer.
 
 Thanks to:
 
+- Amazon, for the Kiro credits used to build this project.
 - [SDL2](https://www.libsdl.org) for windows, input, and audio (zlib license). The downloadable app
   includes SDL 2.32.10.
 - [Julian Smolka's gba-tests](https://github.com/jsmolka/gba-tests) for the test ROMs in `tests/` (MIT license, see `tests/LICENSE`).
 - Hyllian, who designed the xBR and Super-xBR scaling algorithms. The filters here are new
   implementations based on how those algorithms work.
+
+## Giving credit
+
+You're welcome to use, study, and build on LaLune Dorée Emulator. If you do, please credit it:
+
+- **If you copy or adapt the code,** keep the copyright notice and license text from
+  [LICENSE](LICENSE) in your copy. The MIT License requires this.
+- **If you add a feature you saw here,** such as one of the video filters, the game library, or the
+  DualSense controls, please credit this project even if you wrote your own version. Put the credit
+  where people will see it, such as your README or About screen. This part is a request, not a
+  license requirement.
+
+You can use this wording:
+
+> Based on [LaLune Dorée Emulator](https://github.com/IILalune/LaluneDorree-Emulator) by Paul Hoang,
+> built with [Kiro](https://kiro.dev).
+
+If you only borrowed an idea, write "Inspired by" instead of "Based on".
 
 ## Legal
 

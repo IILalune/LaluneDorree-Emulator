@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Copied into the downloadable app by tools/make_dmg.sh. The first time the
+  sandboxed app starts, macOS moves the saves, settings, thumbnails and Games
+  folder that earlier (non-sandboxed) versions kept in
+  ~/Library/Application Support/LaLuneDoree into the app's sandbox folder,
+  ~/Library/Containers/dev.lalunedoree.emulator.
+-->
+<plist version="1.0">
+<dict>
+	<key>Move</key>
+	<array>
+		<string>${ApplicationSupport}/LaLuneDoree</string>
+	</array>
+</dict>
+</plist>

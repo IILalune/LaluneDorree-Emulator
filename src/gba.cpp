@@ -1,6 +1,7 @@
 #include "gba.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 
 GBA::GBA()
@@ -91,7 +92,11 @@ std::string GBA::gameCode() const {
 bool GBA::loadSave(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
-    std::vector<u8> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    // Saves are at most 32 KiB (SRAM); read one byte more so bigger files are
+    // noticed (and rejected for EEPROM) without reading them into memory.
+    std::vector<u8> data(bus.sram.size() + 1);
+    file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    data.resize(static_cast<std::size_t>(file.gcount()));
     if (bus.saveType == SaveType::Eeprom) {
         if (data.size() == 512) bus.eeprom.setAddressBits(6);
         else if (data.size() == 8192) bus.eeprom.setAddressBits(14);
@@ -119,9 +124,23 @@ bool GBA::writeSave(const std::string& path) {
     } else {
         return false;
     }
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
-    file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+    // Write a temporary file and then swap it in, so a crash or a full disk
+    // halfway through leaves the previous save intact instead of a broken one.
+    const std::string temp = path + ".tmp";
+    {
+        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+        if (!file) return false;
+        file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+        file.close();
+        if (!file) {
+            std::remove(temp.c_str());
+            return false;
+        }
+    }
+    if (std::rename(temp.c_str(), path.c_str()) != 0) {
+        std::remove(temp.c_str());
+        return false;
+    }
     bus.clearBackupDirty();
-    return static_cast<bool>(file);
+    return true;
 }

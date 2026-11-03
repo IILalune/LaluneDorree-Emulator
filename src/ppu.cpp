@@ -327,7 +327,9 @@ void PPU::renderSprites() {
             if (colors256) {
                 const u32 tile = mapping1d ? tileBase + tileY * (w / 8) * 2 + tileX * 2
                                            : (tileBase & ~1u) + tileY * 32 + tileX * 2;
-                const u32 addr = 0x10000 + (tile & 0x3FF) * 32 + (ty & 7) * 8 + (tx & 7);
+                // Sprite VRAM is 32 KiB and wraps, so tile 1023 of a 256-colour
+                // sprite can't read past the end of VRAM.
+                const u32 addr = 0x10000 + (((tile & 0x3FF) * 32 + (ty & 7) * 8 + (tx & 7)) & 0x7FFF);
                 colorIndex = vram[addr];
                 color = palette(256 + colorIndex);
             } else {

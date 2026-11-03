@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App Sandbox permissions for LaLune Dorée Emulator (used by tools/make_dmg.sh).
+
+  The sandbox shuts the app in its own folder,
+  ~/Library/Containers/dev.lalunedoree.emulator, where its saves, settings and
+  thumbnails live. Outside it, the app can only open what you pick in an Open
+  dialog or drag onto its window. It can't use the network, camera or
+  microphone, or see your other files.
+-->
+<plist version="1.0">
+<dict>
+	<!-- Turn the sandbox on. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- Files and folders you choose yourself (Open dialog, drag and drop). -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+
+	<!-- Lets the app remember the games folder you picked between launches. -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+
+	<!-- Game controllers (the PS5 DualSense) over USB and Bluetooth. -->
+	<key>com.apple.security.device.usb</key>
+	<true/>
+	<key>com.apple.security.device.bluetooth</key>
+	<true/>
+</dict>
+</plist>
