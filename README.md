@@ -5,7 +5,7 @@
 <h1 align="center">LaLune Dorée Emulator</h1>
 
 <p align="center">A free, open-source Game Boy Advance emulator for macOS.<br>
-<em>La lune dorée</em> is French for "the golden moon".</p>
+<em>La lune dorée</em>, French for "the golden moon".</p>
 
 <p align="center">
   <a href="https://raw.githubusercontent.com/IILalune/LaluneDorree-Emulator/refs/heads/main/release/LaLuneDoree-macOS.dmg">
