@@ -356,5 +356,4 @@ describe what the software emulates. This project contains no Nintendo code, BIO
 
 ## License
 
-No license has been chosen yet. Until a `LICENSE` file is added, the default is "all rights
-reserved": you can read the code, but you can't reuse or redistribute it.
+LaLune Dorée Emulator is released under the [MIT License](LICENSE).
