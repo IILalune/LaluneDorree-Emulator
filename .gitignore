@@ -1,0 +1,18 @@
+# Build output
+build/
+
+# Copyrighted game data - never commit or share these
+games/*
+!games/README.txt
+*.gba
+*.zip
+*.sav
+
+# Except the open-source test ROMs (MIT, see tests/LICENSE)
+!tests/*.gba
+
+# Test output
+*.bmp
+
+__pycache__/
+.DS_Store

@@ -1,0 +1,10 @@
+# Binary files: never diff or change line endings.
+*.dmg binary
+*.gba binary
+*.icns binary
+*.png binary
+*.tiff binary
+
+# Shell scripts must keep Unix line endings to run.
+*.sh text eol=lf
+*.py text eol=lf
