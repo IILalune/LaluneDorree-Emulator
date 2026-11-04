@@ -12,6 +12,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class APU {
 public:
@@ -27,6 +28,7 @@ public:
     void writeWaveRam(u32 offset, u16 value);
     void onTimerOverflow(int timer);
     u16 channelStatus() const;
+    void serialize(StateStream& s);  // see state.hpp
 
     // Interleaved stereo samples (L, R, L, R, ...) produced since last drained.
     std::vector<s16> samples;

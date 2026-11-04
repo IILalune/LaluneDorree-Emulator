@@ -1,6 +1,7 @@
 #include "dma.hpp"
 
 #include "gba.hpp"
+#include "state.hpp"
 
 namespace {
 constexpr u32 kBase[4] = {0xB0, 0xBC, 0xC8, 0xD4};  // register block per channel
@@ -104,4 +105,9 @@ void DMA::transfer(int ch) {
     } else {
         bus.reg(base + 10) = cnt & ~0x8000;  // one-shot transfer: disable channel
     }
+}
+
+void DMA::serialize(StateStream& s) {
+    s.section("DMA ");
+    s.value(channels_);
 }

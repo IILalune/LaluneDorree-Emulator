@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "gba.hpp"
+#include "state.hpp"
 
 namespace {
 // Square wave shapes: 12.5%, 25%, 50%, 75% duty cycle.
@@ -321,4 +322,36 @@ void APU::mixSample() {
 
     samples.push_back(static_cast<s16>(std::clamp(left * 32, -32768, 32767)));
     samples.push_back(static_cast<s16>(std::clamp(right * 32, -32768, 32767)));
+}
+
+void APU::serialize(StateStream& s) {
+    s.section("APU ");
+    s.value(square_);
+    s.value(wave_);
+    s.value(noise_);
+    s.value(fifo_);
+    s.value(waveRam_);
+    s.value(sampleAccumulator_);
+    s.value(frameSequencerCycles_);
+    s.value(frameSequencerStep_);
+    s.value(pendingCycles_);
+    if (!s.loading()) return;
+    // Values used as array indices or shift amounts are kept in range, so a
+    // damaged state can't make the mixer read outside its tables.
+    for (Square& sq : square_) {
+        sq.duty &= 3;
+        sq.step &= 7;
+    }
+    wave_.bank &= 1;
+    wave_.position &= 63;
+    wave_.volumeCode &= 3;
+    noise_.divisor &= 7;
+    noise_.shift &= 15;
+    for (Fifo& q : fifo_) {
+        q.readPos &= 31;
+        q.writePos &= 31;
+        q.count = std::clamp(q.count, 0, 32);
+    }
+    frameSequencerStep_ &= 7;
+    samples.clear();  // sound from before the load shouldn't play after it
 }

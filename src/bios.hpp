@@ -9,6 +9,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class Bios {
 public:
@@ -17,6 +18,7 @@ public:
     // Writes a tiny replacement BIOS image (interrupt dispatcher) into memory.
     void install();
     void swi(u32 number);
+    void serialize(StateStream& s);  // see state.hpp
 
 private:
     GBA& gba_;

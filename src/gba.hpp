@@ -40,8 +40,19 @@ public:
     bool writeSave(const std::string& path);
     bool saveDirty() const { return bus.backupDirty(); }
 
+    // Save states: a snapshot of the whole console between two frames (see
+    // state.hpp). The ROM, the cartridge's save memory and the screen image
+    // are not included. loadState refuses data that doesn't fit this
+    // program's layout and then leaves the console exactly as it was.
+    static constexpr u32 kStateVersion = 1;  // bump when any serialize() changes
+    std::vector<u8> saveState();
+    bool loadState(const std::vector<u8>& data);
+
     std::string gameTitle() const;
     std::string gameCode() const;
+    // Fingerprint of the loaded ROM, so a state is only loaded into the game
+    // (and the exact version of it) that made it.
+    u64 romHash() const { return romHash_; }
 
     // Components. Public so they can easily reach each other; in a bigger
     // program you might hide these behind accessors.
@@ -54,5 +65,8 @@ public:
     Bios bios;
 
 private:
+    u64 romHash_ = 0;
+
     void advance(int cycles);
+    void serialize(StateStream& s);
 };

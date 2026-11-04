@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gba.hpp"
+#include "state.hpp"
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
@@ -434,4 +435,9 @@ void Bios::midiKeyToFreq() {
     const double baseFreq = bus.read<u32>(r[0] + 4);
     const double exponent = (180.0 - r[1] - r[2] / 256.0) / 12.0;
     r[0] = static_cast<u32>(baseFreq / std::pow(2.0, exponent));
+}
+
+void Bios::serialize(StateStream& s) {
+    s.section("BIOS");
+    s.value(waitingForInterrupt_);
 }

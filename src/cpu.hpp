@@ -15,6 +15,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class CPU {
 public:
@@ -22,6 +23,7 @@ public:
 
     void reset();   // puts the CPU in the state the real BIOS leaves it in
     void step();    // execute one instruction (or take a pending interrupt)
+    void serialize(StateStream& s);  // see state.hpp
 
     // Branch to `addr` in the current state (used by the HLE BIOS).
     void jumpTo(u32 addr);

@@ -9,6 +9,8 @@
 
 #include "common.hpp"
 
+class StateStream;
+
 enum class SaveType { None, Eeprom, Sram };
 
 class Eeprom {
@@ -25,6 +27,9 @@ public:
     void detectSizeFromDma(u32 transferCount);
     int addressBits() const { return addrBits_; }
     void setAddressBits(int bits) { addrBits_ = bits; }
+    // Only the transfer in progress: `data` and the chip size belong to the
+    // save file, which save states leave alone.
+    void serialize(StateStream& s);
 
     std::vector<u8> data = std::vector<u8>(8192, 0xFF);
     bool dirty = false;

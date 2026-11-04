@@ -30,6 +30,7 @@ it models, so it doubles as a guide to how the GBA works.
 - **Game library** with thumbnails. Add games by drag-and-drop or from a file picker.
 - **HD video filters** that upscale the 240x160 screen, up to 1920x1280 with Super HD.
 - **Battery saves** (EEPROM and SRAM) written automatically while you play.
+- **Save states**: save at any moment and go back to any earlier one, with a screenshot of each.
 - **PS5 DualSense controller** support over USB-C or Bluetooth, plus full keyboard controls.
 - **Fast-forward** at up to 8x, and **slow motion** at half speed.
 - **Full screen** and resizable windows, with sharp whole-number scaling or fill-the-window.
@@ -188,6 +189,8 @@ window size keys (see below).
 | Select       | Backspace or Right Shift | Create                          |
 | Fast-forward | Hold Tab                 | Hold touchpad click             |
 | Slow motion  | `` ` `` (toggle)         | R3, right stick click (toggle)  |
+| Quick save state | F5 or ⌘S             | L3, left stick click            |
+| Quick load state | F8 or ⌘L             |                                 |
 | Pause menu   | Esc                      | PS button or mic button         |
 | Full screen  | F or F11                 |                                 |
 | Window size  | 3–6 (3x to 6x)           |                                 |
@@ -200,8 +203,16 @@ Only the PS5 DualSense is supported. SDL may detect other controllers, such as X
 button mapping and on-screen prompts (✕ ○ □ △) are made for PlayStation and haven't been tested
 with anything else.
 
-The PS button opens the emulator's pause menu. While the app is in front, it asks macOS not to open
-its Games overlay (or Launchpad) for that button.
+The PS button opens the emulator's pause menu. The first time you use a controller, macOS asks
+whether LaLuneDoree may "override the system behavior" of the home button:
+
+- **Allow**: the PS button opens the emulator's pause menu instead of the Games overlay or Spotlight.
+  This only applies while the emulator is the app in front. When you switch to another app or quit
+  the emulator, the PS button works as usual again. Nothing else on your Mac changes.
+- **Don't Allow**: the PS button keeps opening the Games overlay. Esc still opens the pause menu.
+
+The dialog says this also applies to "games launched by LaLuneDoree". GBA games run inside the
+emulator itself, so that only means the emulator. It doesn't start any other programs.
 
 ### Changing the controls
 
@@ -220,6 +231,7 @@ Besides the GBA buttons you can assign:
 
 - **Turbo A** and **Turbo B**: press A or B over and over while held. Nothing is assigned by default.
 - **Fast-forward** and **Slow motion**.
+- **Quick save state** and **Quick load state** (⌘S and ⌘L always work as well).
 
 Controller options, below the list:
 
@@ -230,6 +242,25 @@ Controller options, below the list:
 | L2 / R2 press point | How far (5–95%) you press L2 or R2 before it counts |
 | Turbo speed | 5, 7.5, 10, 15 or 30 presses a second |
 | Fast-forward button | Hold, or press once to start and again to stop |
+
+### Save states
+
+A save state is a snapshot of the game at one exact moment. You can keep many of them and go back to
+any one, for example to retry a fight from the start of the same room.
+
+- **Quick save** (F5, ⌘S or L3) saves a new state while you play. **Quick load** (F8 or ⌘L) goes
+  back to the newest state you saved.
+- **Save states…** in the pause menu lists every state for the game, newest first, with its
+  screenshot and the time it was made. Pick **Save a new state** to add one, pick any state and
+  press Return (or ✕, or double-click it) to load it, and press Backspace (or △) twice to delete it.
+- Loading a state first keeps where you were as an **Auto backup** at the top of the list, so you
+  can always undo a load.
+- The app keeps your 30 newest saved states and 5 newest auto backups per game, and deletes older
+  ones when you save more.
+- States are separate from the game's own saves. Loading a state never changes your `.sav` file.
+- A state only loads into the exact game (and version of it) that made it.
+
+States are kept in a `States/<game code>/` folder next to the saves (see below), about 550 KB each.
 
 ### Saves and settings
 
@@ -247,7 +278,7 @@ boot into gameplay with sound and saves. Known limitations:
 
 - **Flash saves are not supported yet.** Games that save to Flash memory (common in larger games,
   including the Pokémon series) will run but won't keep their saves. EEPROM and SRAM saves work.
-- No save states, link cable, or rumble yet.
+- No link cable or rumble yet.
 - macOS only. The emulator core is portable C++, but the app around it uses AppKit.
 
 If a game doesn't work, please open an issue with the game's name and 4-letter code. The library
@@ -333,9 +364,15 @@ build/LaLuneDoree.app/Contents/MacOS/LaLuneDoree games/yourgame.gba \
 | `--press F:key,...` | Press buttons at given frames (`a b l r start select up down left right`) |
 | `--save file.sav` | Load this save file first and write it back at the end |
 | `--filter N` | Run the final screenshot through a video filter (0–6, in the order of the table above) |
+| `--load-state file.state` | Load this save state before running |
+| `--save-state file.state` | Write a save state after the last frame |
+
+Save states make a good check that emulation is repeatable: running 600 frames, saving a state, and
+then running 300 more frames from it gives the same screenshot as running 900 frames in one go (with
+`--press` frames shifted by 600).
 
 To check the menus after changing how they look, draw every screen (intro, library, empty library,
-settings, and the pause menu) into BMP files, at 960x640 and at the smallest window size, without
+settings, the pause menu and Save States) into BMP files, at 960x640 and at the smallest window size, without
 opening a window:
 
 ```sh
@@ -343,7 +380,7 @@ build/LaLuneDoree.app/Contents/MacOS/LaLuneDoree games/yourgame.gba --ui-dump bu
 ```
 
 With a ROM, the library shows that ROM's folder and the pause menu is drawn over the game. Nothing
-is saved.
+is saved, apart from a few example states in a `states/` folder inside the dump folder.
 
 ### How the code is organised
 
@@ -362,10 +399,12 @@ Read the files roughly in this order. Each one starts with a comment explaining 
 | `apu.hpp/.cpp` | Sound channels and sample FIFOs | small structs with methods, integer resampling |
 | `timers`, `dma` | Hardware timers, memory-copy engine | edge detection, callbacks between components |
 | `backup.hpp/.cpp` | EEPROM and SRAM save chips | state machines, `enum class` |
+| `state.hpp/.cpp` | Snapshot of the whole console (save states) | one `serialize()` per component for both saving and loading, `static_assert` with type traits |
 | `main.cpp` | macOS window, input, audio, library and settings screens (SDL2) | RAII (destructors free resources), `std::unique_ptr`, `std::optional` |
 | `controls.hpp/.cpp` | Which keys and buttons press what, and their names | `std::array`, `enum class` used as an index |
 | `settings.hpp/.cpp` | Saved user preferences | `static` factory functions, simple file parsing, defaults via member initialisers |
 | `library.hpp/.cpp` | The games folder | `std::filesystem`, `std::optional` for "might fail" results |
+| `save_states.hpp/.cpp` | Save state files: list, save, load, delete | a checked binary file header, write-then-rename for safe saving |
 | `video_filters.hpp/.cpp` | HD upscaling and screen effects | lookup tables, templates with `if constexpr`, multithreading with Grand Central Dispatch |
 
 ### A frame, end to end

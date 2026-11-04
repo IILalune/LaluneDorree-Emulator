@@ -9,6 +9,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class Timers {
 public:
@@ -20,6 +21,7 @@ public:
     u16 readCounter(int i) const { return static_cast<u16>(timers_[i].counter); }
     void writeReload(int i, u16 value) { timers_[i].reload = value; }
     void writeControl(int i, u16 value);
+    void serialize(StateStream& s);  // see state.hpp
 
 private:
     struct Timer {

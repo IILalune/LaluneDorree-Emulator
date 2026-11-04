@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LaLuneDoree VERSION 1.01 LANGUAGES CXX OBJCXX)
+project(LaLuneDoree VERSION 1.02 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,6 +27,7 @@ set(CORE_SOURCES
   src/dma.cpp
   src/gba.cpp
   src/ppu.cpp
+  src/state.cpp
   src/timers.cpp
 )
 
@@ -35,6 +36,7 @@ set(FRONTEND_SOURCES
   src/main.cpp
   src/controls.cpp
   src/library.cpp
+  src/save_states.cpp
   src/settings.cpp
   src/video_filters.cpp
   src/mac_ui.mm
@@ -76,6 +78,7 @@ target_link_libraries(LaLuneDoree PRIVATE
   "-framework UniformTypeIdentifiers"
 )
 target_compile_options(LaLuneDoree PRIVATE -Wall -Wextra -Wno-unused-parameter)
+target_compile_definitions(LaLuneDoree PRIVATE LALUNE_VERSION="${PROJECT_VERSION}")
 
 # Hardening, because the app runs code from ROM files downloaded off the internet:
 # - libc++ "fast" hardening mode makes std::array/std::vector indexing and

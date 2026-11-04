@@ -13,6 +13,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class PPU {
 public:
@@ -23,6 +24,9 @@ public:
 
     u16 vcount() const { return vcount_; }
     void latchAffine(int index);  // BG2X/BG2Y etc. were written
+    // Everything except `framebuffer`: the next frame redraws it, and save
+    // state files keep it as their screenshot (see save_states.hpp).
+    void serialize(StateStream& s);
 
     bool frameReady = false;
     // Final image, one 0xAARRGGBB value per pixel.

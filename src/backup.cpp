@@ -1,5 +1,9 @@
 #include "backup.hpp"
 
+#include <algorithm>
+
+#include "state.hpp"
+
 void Eeprom::reset() {
     state_ = State::Receiving;
     bits_.clear();
@@ -67,4 +71,16 @@ u16 Eeprom::readBit() {
     }
     if (++sendPos_ == 68) state_ = State::Receiving;
     return bit;
+}
+
+void Eeprom::serialize(StateStream& s) {
+    s.section("EEPR");
+    s.value(state_);
+    s.vector(bits_, 2 + 14 + 64 + 1);  // the longest request
+    s.value(sendBuffer_);
+    s.value(sendPos_);
+    if (s.loading()) {
+        if (state_ != State::Receiving && state_ != State::Sending) state_ = State::Receiving;
+        sendPos_ = std::clamp(sendPos_, 0, 68);
+    }
 }

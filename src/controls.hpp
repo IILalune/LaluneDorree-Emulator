@@ -9,7 +9,8 @@
 #include <string>
 
 // In the order the Controls screen lists them.
-enum class Control { Up, Down, Left, Right, A, B, L, R, Start, Select, TurboA, TurboB, FastForward, SlowMotion, Count };
+enum class Control { Up, Down, Left, Right, A, B, L, R, Start, Select, TurboA, TurboB, FastForward, SlowMotion,
+                     QuickSave, QuickLoad, Count };
 constexpr int kControlCount = static_cast<int>(Control::Count);
 constexpr int kBindingSlots = 2;  // two keys and two controller buttons per control
 constexpr int kUnbound = -1;

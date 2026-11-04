@@ -8,6 +8,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class DMA {
 public:
@@ -18,6 +19,7 @@ public:
     void onVBlank();
     void onHBlank();
     void onFifoRequest(int fifo);  // fifo 0 = A, 1 = B
+    void serialize(StateStream& s);  // see state.hpp
 
 private:
     struct Channel {

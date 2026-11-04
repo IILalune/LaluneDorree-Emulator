@@ -3,6 +3,7 @@
 #include <climits>
 
 #include "gba.hpp"
+#include "state.hpp"
 
 Timers::Timers(GBA& gba) : gba_(gba) {}
 
@@ -61,4 +62,9 @@ int Timers::cyclesUntilOverflow() const {
         if (cycles < best) best = static_cast<int>(cycles < 1 ? 1 : cycles);
     }
     return best;
+}
+
+void Timers::serialize(StateStream& s) {
+    s.section("TIMR");
+    s.value(timers_);
 }

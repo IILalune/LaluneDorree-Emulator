@@ -3,6 +3,7 @@
 #include <type_traits>
 
 #include "gba.hpp"
+#include "state.hpp"
 
 Bus::Bus(GBA& gba) : gba_(gba) {}
 
@@ -343,4 +344,21 @@ void Bus::ioWrite16(u32 off, u16 value) {
         return;
     }
     reg(off) = value;
+}
+
+void Bus::serialize(StateStream& s) {
+    s.section("BUS ");
+    s.value(ewram);
+    s.value(iwram);
+    s.value(pram);
+    s.value(vram);
+    s.value(oam);
+    s.value(io);
+    s.value(keyInput);
+    s.value(biosLatch);
+    s.value(cycles);
+    eeprom.serialize(s);
+    // The BIOS image is rewritten identically by Bios::install, and the wait
+    // states follow from WAITCNT, so neither needs storing.
+    if (s.loading()) updateWaitStates();
 }

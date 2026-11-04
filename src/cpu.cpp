@@ -1,6 +1,7 @@
 #include "cpu.hpp"
 
 #include "gba.hpp"
+#include "state.hpp"
 
 CPU::CPU(GBA& gba) : gba_(gba) {}
 
@@ -246,4 +247,19 @@ u32 CPU::loadSigned16(u32 addr) {
     // A misaligned signed halfword load behaves like a signed byte load.
     if (addr & 1) return static_cast<u32>(static_cast<s8>(gba_.bus.read8(addr)));
     return static_cast<u32>(static_cast<s16>(gba_.bus.read16(addr)));
+}
+
+void CPU::serialize(StateStream& s) {
+    s.section("CPU ");
+    s.value(r);
+    s.value(cpsr);
+    s.value(openBus);
+    s.value(halted);
+    s.value(flushed_);
+    s.value(nextSequential_);
+    s.value(bankR13_);
+    s.value(bankR14_);
+    s.value(bankSpsr_);
+    s.value(userR8to12_);
+    s.value(fiqR8to12_);
 }

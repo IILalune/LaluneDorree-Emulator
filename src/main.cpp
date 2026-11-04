@@ -15,6 +15,9 @@
 //             L1 / L2 = L    R1 / R2 = R    Options = Start    Create = Select
 //             touchpad click (hold) = fast-forward    R3 = slow motion on/off
 //   Turbo A / Turbo B are unassigned until you pick keys for them.
+//   Save states: F5 or Cmd+S (L3 on the controller) = quick save
+//                F8 or Cmd+L = quick load (the newest state you saved)
+//   The pause menu's "Save states" screen lists every state to load or delete.
 // Fixed keys: Esc / PS / mic button = pause menu    F / F11 = toggle fullscreen
 //   V / Shift+V = next / previous video filter    3-6 = window size 3x-6x
 //   (F, V and 3-6 go to the game instead if you assign them to a control.)
@@ -23,6 +26,7 @@
 //   LaLuneDoree [rom.gba]                    open the library, or play a ROM directly
 //   LaLuneDoree rom.gba --headless 600 --dump out.bmp [--dump-every N] [--press 300:start,...] [--save file.sav]
 //                             [--filter N]  (screenshot through video filter N, 0-6; see video_filters.hpp)
+//                             [--load-state in.state] [--save-state out.state]  (before / after the run)
 //   LaLuneDoree [rom.gba] --ui-dump folder   draw every menu screen into BMP files (for checking the UI)
 #include <SDL.h>
 
@@ -33,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -48,6 +53,7 @@
 #include "gba.hpp"
 #include "library.hpp"
 #include "mac_ui.hpp"
+#include "save_states.hpp"
 #include "video_filters.hpp"
 #include "settings.hpp"
 
@@ -107,12 +113,20 @@ void copyDataFromOldName() {
 // Saves are named after the 4-letter game code (e.g. BLRE.sav), so a game
 // keeps its save even if the ROM file is renamed. Homebrew often has no
 // code, so fall back to the ROM's file name.
-std::string savePathFor(const std::string& gameCode, const std::string& romPath) {
+std::string saveNameFor(const std::string& gameCode, const std::string& romPath) {
     const bool validCode = gameCode.size() == 4 &&
                            std::all_of(gameCode.begin(), gameCode.end(),
                                        [](unsigned char c) { return std::isalnum(c); });
-    const std::string name = validCode ? gameCode : std::filesystem::path(romPath).stem().string();
-    return prefPath() + name + ".sav";
+    return validCode ? gameCode : std::filesystem::path(romPath).stem().string();
+}
+
+std::string savePathFor(const std::string& gameCode, const std::string& romPath) {
+    return prefPath() + saveNameFor(gameCode, romPath) + ".sav";
+}
+
+// Save states go in a folder per game, named like its save file (States/BLRE/).
+std::string statesFolderFor(const std::string& gameCode, const std::string& romPath) {
+    return prefPath() + "States/" + saveNameFor(gameCode, romPath);
 }
 
 u16 keyFromName(const std::string& name) {
@@ -267,7 +281,10 @@ enum class Align { Left, Center, Right };
 // Things a player can do in a menu, from any input device.
 enum class MenuAction { Up, Down, Left, Right, Accept, Back, AddRoms, OpenFolder, OpenSettings, Clear };
 
-enum class Screen { Library, Playing, Paused, Settings, Controls };
+enum class Screen { Library, Playing, Paused, Settings, Controls, States };
+
+// Pause menu items, in display order.
+enum class PauseItem { Resume, SaveStates, Reset, Settings, Fullscreen, Library, Quit, Count };
 
 // Rows on the settings screen, in display order.
 enum class SettingRow {
@@ -315,6 +332,7 @@ public:
     ~App() {
         clearTextCache();
         clearThumbnails();
+        clearStateScreenshots();
         if (controller_) SDL_GameControllerClose(controller_);
         if (audio_) SDL_CloseAudioDevice(audio_);
         for (SDL_Texture* t : {screenTexture_, glowTexture_, vignetteTexture_, skyTexture_, moonTexture_,
@@ -369,6 +387,7 @@ public:
         romPath_ = path;
         savePath_ = savePathFor(gba_->gameCode(), path);
         gba_->loadSave(savePath_);
+        states_.open(statesFolderFor(gba_->gameCode(), path), gba_->romHash());
         SDL_SetWindowTitle(window_, (std::string(kAppName) + " - " + gameName(path)).c_str());
         screen_ = Screen::Playing;
         suppressInput_ = true;
@@ -407,6 +426,11 @@ public:
                 break;
             case Screen::Controls:
                 drawControls();
+                SDL_RenderPresent(renderer_);
+                SDL_Delay(16);
+                break;
+            case Screen::States:
+                drawStates();
                 SDL_RenderPresent(renderer_);
                 SDL_Delay(16);
                 break;
@@ -459,6 +483,14 @@ private:
 
     std::unique_ptr<GBA> gba_;  // the running game, if any
     std::string romPath_, savePath_;
+
+    // Save States screen (opened from the pause menu). Row 0 is "Save a new
+    // state"; row i > 0 is states_.list()[i - 1].
+    SaveStates states_;
+    int statesSelected_ = 0;
+    int statesScroll_ = 0;       // first row shown
+    int statesDeleteArmed_ = -1; // row waiting for a second Delete press, or -1
+    std::unordered_map<std::string, SDL_Texture*> stateScreenshots_;  // by path; "" = the game right now
     Clock::time_point nextFrame_ = Clock::now(), lastSave_ = Clock::now();
     bool fastForwarding_ = false;
     bool slowMotion_ = false;   // toggled with ` or R3; holding fast-forward overrides it
@@ -538,6 +570,9 @@ private:
         tapped_ = 0;
 
         if (pressed & controlBit(Control::SlowMotion)) toggleSlowMotion();
+        // States are saved and loaded between frames, before this one runs.
+        if (pressed & controlBit(Control::QuickSave)) quickSave();
+        else if (pressed & controlBit(Control::QuickLoad)) quickLoad();
         if (settings_.fastForwardToggle) {
             if (pressed & controlBit(Control::FastForward)) fastForwardOn_ = !fastForwardOn_;
             fastForwarding_ = fastForwardOn_;
@@ -661,6 +696,94 @@ private:
         slowMotion_ = !slowMotion_;
         showToast(slowMotion_ ? "Slow motion on" : "Slow motion off");
     }
+
+    // -----------------------------------------------------------------------
+    // Save states (see save_states.hpp)
+    // -----------------------------------------------------------------------
+
+    // Saves the game as it is right now. Says why if it couldn't.
+    bool saveStateNow() {
+        std::string error;
+        if (states_.save(*gba_, StateKind::Saved, error)) return true;
+        showToast(error);
+        return false;
+    }
+
+    void quickSave() {
+        if (saveStateNow()) showToast("State saved");
+    }
+
+    // Loads the newest state you saved (backups are skipped, so pressing it
+    // twice doesn't flip between two moments).
+    void quickLoad() {
+        states_.refresh();
+        const StateInfo* latest = states_.latest(StateKind::Saved);
+        if (!latest) {
+            showToast("No saved state yet");
+            return;
+        }
+        loadState(latest->path);
+    }
+
+    // Loads a state. The moment you were at is kept first, as a backup state,
+    // so going back is never a one-way trip. `path` is a copy on purpose:
+    // saving the backup rebuilds the list it may have come from.
+    bool loadState(const std::string path) {
+        std::string error;
+        const auto file = SaveStates::readFile(path, *gba_, error);
+        if (!file) {
+            showToast(error);
+            return false;
+        }
+        if (!states_.save(*gba_, StateKind::Backup, error)) {
+            showToast("Not loaded: couldn't keep a backup of where you are");
+            return false;
+        }
+        if (!SaveStates::apply(*gba_, *file)) {
+            showToast("This state file is damaged.");
+            return false;
+        }
+        if (audio_) SDL_ClearQueuedAudio(audio_);
+        lastSample_[0] = lastSample_[1] = 0;
+        frameDirty_ = true;
+        showToast("Loaded state from " + stateTimeLabel(file->info.createdMs));
+        return true;
+    }
+
+    // When a state was made, e.g. "Today, 3:42:05 PM", "Tuesday, 9:10:00 AM"
+    // or "Oct 3, 2026, 8:01:12 PM".
+    static std::string stateTimeLabel(s64 createdMs) {
+        const std::time_t made = static_cast<std::time_t>(createdMs / 1000), current = std::time(nullptr);
+        std::tm when{}, now{};
+        localtime_r(&made, &when);
+        localtime_r(&current, &now);
+        char clock[32];
+        std::snprintf(clock, sizeof clock, "%d:%02d:%02d %s", when.tm_hour % 12 == 0 ? 12 : when.tm_hour % 12,
+                      when.tm_min, when.tm_sec, when.tm_hour < 12 ? "AM" : "PM");
+        // Calendar days between the two dates (compared at noon, so daylight
+        // saving changes don't matter).
+        auto noon = [](std::tm t) {
+            t.tm_hour = 12;
+            t.tm_min = t.tm_sec = 0;
+            t.tm_isdst = -1;
+            return std::mktime(&t);
+        };
+        const long days = std::lround(std::difftime(noon(now), noon(when)) / 86400);
+        std::string date;
+        if (days == 0) date = "Today";
+        else if (days == 1) date = "Yesterday";
+        else {
+            char text[32];
+            if (days > 1 && days < 7) std::strftime(text, sizeof text, "%A", &when);
+            else std::snprintf(text, sizeof text, "%s %d, %d", kMonths[when.tm_mon % 12], when.tm_mday,
+                               when.tm_year + 1900);
+            date = text;
+        }
+        return date + ", " + clock;
+    }
+
+    static constexpr const char* kMonths[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
     // -----------------------------------------------------------------------
     // Input
@@ -887,6 +1010,7 @@ private:
             else if (screen_ == Screen::Paused) pauseAction(action);
             else if (screen_ == Screen::Settings) settingsAction(action);
             else if (screen_ == Screen::Controls) controlsAction(action);
+            else if (screen_ == Screen::States) statesAction(action);
         }
     }
 
@@ -910,7 +1034,9 @@ private:
                 return;
             }
             if (key.repeat) return;
-            if (sym == SDLK_f || sym == SDLK_F11) toggleFullscreen();
+            if ((key.keysym.mod & KMOD_GUI) && sym == SDLK_s) quickSave();       // like Save in Mac apps
+            else if ((key.keysym.mod & KMOD_GUI) && sym == SDLK_l) quickLoad();
+            else if (sym == SDLK_f || sym == SDLK_F11) toggleFullscreen();
             else if (sym == SDLK_v) {  // cycle video filters (Shift+V goes backwards)
                 setVideoFilter(settings_.videoFilter + ((key.keysym.mod & KMOD_SHIFT) ? -1 : 1));
                 showToast(std::string("Filter: ") + videoFilterName(currentFilter()));
@@ -929,12 +1055,13 @@ private:
         else if (sym == SDLK_LEFT) actions.push_back(MenuAction::Left);
         else if (sym == SDLK_RIGHT) actions.push_back(MenuAction::Right);
         if (key.repeat) return;
-        const bool controlsScreen = screen_ == Screen::Controls;
+        // Lists where Delete removes the selected entry instead of going back.
+        const bool listScreen = screen_ == Screen::Controls || screen_ == Screen::States;
         switch (sym) {
         case SDLK_COMMA: actions.push_back(MenuAction::OpenSettings); break;  // also Cmd+, like other Mac apps
         case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_x: actions.push_back(MenuAction::Accept); break;
         case SDLK_BACKSPACE: case SDLK_DELETE:
-            actions.push_back(controlsScreen ? MenuAction::Clear : MenuAction::Back);
+            actions.push_back(listScreen ? MenuAction::Clear : MenuAction::Back);
             break;
         case SDLK_ESCAPE: case SDLK_z: actions.push_back(MenuAction::Back); break;
         case SDLK_o: actions.push_back(MenuAction::AddRoms); break;
@@ -963,7 +1090,8 @@ private:
         case SDL_CONTROLLER_BUTTON_A: actions.push_back(MenuAction::Accept); break;        // Cross
         case SDL_CONTROLLER_BUTTON_B: actions.push_back(MenuAction::Back); break;          // Circle
         case SDL_CONTROLLER_BUTTON_Y:                                                      // Triangle
-            actions.push_back(screen_ == Screen::Controls ? MenuAction::Clear : MenuAction::AddRoms);
+            actions.push_back(screen_ == Screen::Controls || screen_ == Screen::States ? MenuAction::Clear
+                                                                                        : MenuAction::AddRoms);
             break;
         case SDL_CONTROLLER_BUTTON_X: actions.push_back(MenuAction::OpenFolder); break;    // Square
         case SDL_CONTROLLER_BUTTON_START:
@@ -983,6 +1111,13 @@ private:
         if (screen_ == Screen::Settings) {
             for (int i = 0; i < static_cast<int>(SettingRow::Count); ++i)
                 if (settingsRowRect(i).contains(x, y)) settingsSelected_ = i;
+            return;
+        }
+        if (screen_ == Screen::States) {
+            if (const int row = statesHitTest(x, y); row >= 0 && row != statesSelected_) {
+                statesSelected_ = row;
+                statesDeleteArmed_ = -1;
+            }
             return;
         }
         if (screen_ != Screen::Paused) return;
@@ -1009,6 +1144,19 @@ private:
                 if (x >= value.x + value.w - 32) return controlsAction(MenuAction::Right);
             }
             controlsAction(MenuAction::Accept);
+            return;
+        }
+        if (screen_ == Screen::States) {
+            // A click picks a row and a double-click (or the buttons) acts on it,
+            // like the library, so a stray click can't load a state.
+            const StatesLayout l = statesLayout();
+            if (l.mainButton.contains(x, y)) return statesAction(MenuAction::Accept);
+            if (stateAt(statesSelected_) && l.deleteButton.contains(x, y)) return statesAction(MenuAction::Clear);
+            if (const int row = statesHitTest(x, y); row >= 0) {
+                if (row != statesSelected_) statesDeleteArmed_ = -1;
+                statesSelected_ = row;
+                if (clicks >= 2) statesAction(MenuAction::Accept);
+            }
             return;
         }
         if (screen_ == Screen::Paused) {
@@ -1051,7 +1199,7 @@ private:
     }
 
     void onWheel(const SDL_MouseWheelEvent& wheel) {
-        if (screen_ != Screen::Library && screen_ != Screen::Controls) return;
+        if (screen_ != Screen::Library && screen_ != Screen::Controls && screen_ != Screen::States) return;
         float amount = wheel.preciseY;
         if (wheel.direction == SDL_MOUSEWHEEL_FLIPPED) amount = -amount;
         wheelAccum_ += amount;
@@ -1059,6 +1207,14 @@ private:
             const int maxScroll = std::max(0, controlsRowCount() - controlsVisibleRows());
             while (wheelAccum_ >= 1) { controlsScroll_ = std::max(0, controlsScroll_ - 1); wheelAccum_ -= 1; }
             while (wheelAccum_ <= -1) { controlsScroll_ = std::min(maxScroll, controlsScroll_ + 1); wheelAccum_ += 1; }
+            return;
+        }
+        if (screen_ == Screen::States) {  // moves the selection (without wrapping around)
+            while (wheelAccum_ >= 1) { if (statesSelected_ > 0) statesAction(MenuAction::Up); wheelAccum_ -= 1; }
+            while (wheelAccum_ <= -1) {
+                if (statesSelected_ < statesRowCount() - 1) statesAction(MenuAction::Down);
+                wheelAccum_ += 1;
+            }
             return;
         }
         while (wheelAccum_ >= 1) { libraryAction(MenuAction::Up); wheelAccum_ -= 1; }
@@ -1110,34 +1266,129 @@ private:
         selected_ = std::clamp(selected_, 0, std::max(0, static_cast<int>(library_.games().size()) - 1));
     }
 
+    // Labels in PauseItem order.
     std::vector<std::string> pauseItems() const {
         const bool full = SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP;
-        return {"Resume", "Reset game", "Settings", full ? "Exit full screen" : "Full screen", "Back to library",
-                "Quit"};
+        return {"Resume", "Save states\u2026", "Reset game", "Settings", full ? "Exit full screen" : "Full screen",
+                "Back to library", "Quit"};
     }
 
     void pauseAction(MenuAction action) {
-        const int count = static_cast<int>(pauseItems().size());
+        const int count = static_cast<int>(PauseItem::Count);
         switch (action) {
         case MenuAction::Up: pauseSelected_ = (pauseSelected_ + count - 1) % count; break;
         case MenuAction::Down: pauseSelected_ = (pauseSelected_ + 1) % count; break;
         case MenuAction::Back: resumeGame(); break;
         case MenuAction::Accept:
-            switch (pauseSelected_) {
-            case 0: resumeGame(); break;
-            case 1:
+            switch (static_cast<PauseItem>(pauseSelected_)) {
+            case PauseItem::Resume: resumeGame(); break;
+            case PauseItem::SaveStates: openStates(); break;
+            case PauseItem::Reset:
                 gba_->writeSave(savePath_);
                 gba_->reset();
                 resumeGame();
                 break;
-            case 2: openSettings(); break;
-            case 3: toggleFullscreen(); break;
-            case 4: backToLibrary(); break;
-            case 5: running_ = false; break;
+            case PauseItem::Settings: openSettings(); break;
+            case PauseItem::Fullscreen: toggleFullscreen(); break;
+            case PauseItem::Library: backToLibrary(); break;
+            case PauseItem::Quit: running_ = false; break;
+            case PauseItem::Count: break;
             }
             break;
         default: break;
         }
+    }
+
+    // ---- Save States screen ----
+
+    int statesRowCount() const { return 1 + static_cast<int>(states_.list().size()); }
+
+    // The state on a row, or nullptr for row 0 ("Save a new state").
+    const StateInfo* stateAt(int row) const {
+        return row >= 1 && row < statesRowCount() ? &states_.list()[row - 1] : nullptr;
+    }
+
+    void openStates() {
+        states_.refresh();
+        screen_ = Screen::States;
+        statesSelected_ = statesScroll_ = 0;
+        statesDeleteArmed_ = -1;
+    }
+
+    void closeStates() {
+        clearStateScreenshots();
+        screen_ = Screen::Paused;
+        pauseSelected_ = static_cast<int>(PauseItem::SaveStates);
+    }
+
+    void statesAction(MenuAction action) {
+        const int count = statesRowCount();
+        const int before = statesSelected_;
+        switch (action) {
+        case MenuAction::Up: statesSelected_ = (statesSelected_ + count - 1) % count; break;
+        case MenuAction::Down: statesSelected_ = (statesSelected_ + 1) % count; break;
+        case MenuAction::Accept:
+            if (const StateInfo* state = stateAt(statesSelected_)) {
+                if (loadState(state->path)) {
+                    clearStateScreenshots();
+                    resumeGame();
+                    return;
+                }
+                states_.refresh();  // e.g. the file was deleted in Finder
+            } else if (saveStateNow()) {
+                forgetStateScreenshot("");
+                statesSelected_ = 1;  // the new state is the newest, at the top
+                showToast("State saved");
+            }
+            break;
+        case MenuAction::Clear:
+            if (const StateInfo* state = stateAt(statesSelected_)) {
+                // Deleting takes two presses, so one slip can't lose a state.
+                if (statesDeleteArmed_ != statesSelected_) {
+                    statesDeleteArmed_ = statesSelected_;
+                    showToast(std::string("Press ") + (controller_ ? "\u25B3" : "\u232B") + " again to delete");
+                    return;
+                }
+                const std::string path = state->path;
+                forgetStateScreenshot(path);
+                if (states_.remove(path)) showToast("State deleted");
+                else showToast("Couldn't delete the state");
+            }
+            break;
+        case MenuAction::Back: case MenuAction::OpenSettings: closeStates(); return;
+        default: break;
+        }
+        statesSelected_ = std::clamp(statesSelected_, 0, statesRowCount() - 1);
+        if (statesSelected_ != before || action == MenuAction::Clear) statesDeleteArmed_ = -1;
+    }
+
+    void clearStateScreenshots() {
+        for (auto& [path, texture] : stateScreenshots_)
+            if (texture) SDL_DestroyTexture(texture);
+        stateScreenshots_.clear();
+    }
+
+    void forgetStateScreenshot(const std::string& path) {
+        if (auto it = stateScreenshots_.find(path); it != stateScreenshots_.end()) {
+            if (it->second) SDL_DestroyTexture(it->second);
+            stateScreenshots_.erase(it);
+        }
+    }
+
+    // A state's screenshot, read from its file once and then kept until the
+    // screen closes. `path` "" is the game as it is now.
+    SDL_Texture* stateScreenshot(const std::string& path) {
+        if (auto it = stateScreenshots_.find(path); it != stateScreenshots_.end()) return it->second;
+        SDL_Texture* texture = nullptr;
+        if (path.empty()) {
+            if (gba_) texture = makeTexture(std::vector<u32>(gba_->ppu.framebuffer.begin(), gba_->ppu.framebuffer.end()),
+                                            kScreenWidth, kScreenHeight, false);
+        } else if (std::vector<u32> pixels; SaveStates::readScreenshot(path, pixels)) {
+            texture = makeTexture(pixels, kScreenWidth, kScreenHeight, false);
+        }
+        if (texture) SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);  // GBA pixels have no real alpha
+        stateScreenshots_[path] = texture;
+        return texture;
     }
 
     void toggleFullscreen() {
@@ -1164,7 +1415,7 @@ private:
 
     void closeSettings() {
         screen_ = settingsReturn_;
-        if (screen_ == Screen::Paused) pauseSelected_ = 2;  // keep "Settings" highlighted
+        if (screen_ == Screen::Paused) pauseSelected_ = static_cast<int>(PauseItem::Settings);  // keep it highlighted
     }
 
     // Steps a value through a fixed list of choices, clamped at the ends.
@@ -2169,6 +2420,183 @@ private:
         drawHints(hints, panel.x + panel.w / 2, panel.y + panel.h - 30, panel.w - 24, Align::Center);
     }
 
+    // ---- Save States ----
+    //
+    // A list on the left (newest first, under a "Save a new state" row) and
+    // the selected state's screenshot on the right, big enough to tell apart
+    // two states taken in the same room.
+
+    static constexpr float kStatesPitch = 58;
+
+    struct StatesLayout {
+        Rect panel, list, preview, mainButton, deleteButton;
+        int visibleRows = 1;
+    };
+
+    StatesLayout statesLayout() const {
+        const Rect win = windowRect();
+        StatesLayout l;
+        const float w = std::min(860.0f, win.w - 48), h = std::min(600.0f, win.h - 32);
+        l.panel = {(win.w - w) / 2, (win.h - h) / 2, w, h};
+        const float top = l.panel.y + 70, bottom = l.panel.y + h - 62;
+        const float innerX = l.panel.x + 18, innerW = w - 36;
+        const float listW = std::floor(innerW * 0.54f);
+        l.list = {innerX, top, listW, bottom - top};
+        l.preview = {innerX + listW + 14, top, innerW - listW - 14, bottom - top};
+        l.visibleRows = std::max(1, static_cast<int>(l.list.h / kStatesPitch));
+        const float buttonsW = std::min(244.0f, l.preview.w - 36);
+        const float mainW = std::floor(buttonsW * 0.56f), y = l.preview.y + l.preview.h - 18 - 38;
+        l.mainButton = {l.preview.x + l.preview.w - 18 - mainW, y, mainW, 38};
+        l.deleteButton = {l.preview.x + l.preview.w - 18 - buttonsW, y, buttonsW - mainW - 10, 38};
+        return l;
+    }
+
+    Rect statesRowRect(const StatesLayout& l, int row) const {
+        return {l.list.x, l.list.y + (row - statesScroll_) * kStatesPitch, l.list.w - 10, kStatesPitch - 6};
+    }
+
+    // Keeps the selected row on screen.
+    void scrollStatesToSelection(const StatesLayout& l) {
+        if (statesSelected_ < statesScroll_) statesScroll_ = statesSelected_;
+        if (statesSelected_ >= statesScroll_ + l.visibleRows) statesScroll_ = statesSelected_ - l.visibleRows + 1;
+        statesScroll_ = std::clamp(statesScroll_, 0, std::max(0, statesRowCount() - l.visibleRows));
+    }
+
+    // The row under (x, y), or -1.
+    int statesHitTest(float x, float y) const {
+        const StatesLayout l = statesLayout();
+        for (int row = statesScroll_; row < std::min(statesRowCount(), statesScroll_ + l.visibleRows); ++row)
+            if (statesRowRect(l, row).contains(x, y)) return row;
+        return -1;
+    }
+
+    // Short for the list; `full` for the preview, which has room to explain.
+    static std::string stateKindLabel(StateKind kind, bool full = false) {
+        if (kind == StateKind::Saved) return "Saved state";
+        return full ? "Auto backup from before a load" : "Auto backup";
+    }
+
+    // "just now", "5 min ago", "3 h ago", "2 days ago".
+    static std::string ageLabel(s64 createdMs) {
+        const s64 seconds = std::max<s64>(0, (SaveStates::nowMs() - createdMs) / 1000);
+        if (seconds < 60) return "just now";
+        if (seconds < 3600) return std::to_string(seconds / 60) + " min ago";
+        if (seconds < 86400) return std::to_string(seconds / 3600) + " h ago";
+        const s64 days = seconds / 86400;
+        return days == 1 ? "1 day ago" : std::to_string(days) + " days ago";
+    }
+
+    // How to quick save while playing, from the current key bindings.
+    std::string quickSaveHint() const {
+        const int key = settings_.bindings.keys[static_cast<int>(Control::QuickSave)][0];
+        return "Quick save while playing: " + (key == kUnbound ? std::string() : keyLabel(key) + " or ") + "\u2318S";
+    }
+
+    // A screenshot in `r`, scaled from 240x160; a dim moon if there is none.
+    void drawStateScreenshot(const Rect& r, const std::string& path, float moonUnit) {
+        if (SDL_Texture* image = stateScreenshot(path)) {
+            const SDL_Rect dst{static_cast<int>(std::lround(r.x * scale_)), static_cast<int>(std::lround(r.y * scale_)),
+                               static_cast<int>(std::lround(r.w * scale_)), static_cast<int>(std::lround(r.h * scale_))};
+            SDL_RenderCopy(renderer_, image, nullptr, &dst);
+            return;
+        }
+        fill(r, {10, 10, 30, 230});
+        const float mw = artSize(moonW_, moonUnit), mh = artSize(moonH_, moonUnit);
+        drawMoon(r.x + (r.w - mw) / 2, r.y + (r.h - mh) / 2, moonUnit, 0.45);
+    }
+
+    void drawStates() {
+        dimGame();
+        const StatesLayout l = statesLayout();
+        scrollStatesToSelection(l);
+        drawPixelBox(l.panel, palette::kPanelSolid, palette::kBorder, 3);
+        drawMenuTitle(l.panel, "Save States");
+
+        constexpr float kThumbW = 60, kThumbH = 40;
+        const int count = statesRowCount();
+        for (int row = statesScroll_; row < std::min(count, statesScroll_ + l.visibleRows); ++row) {
+            const Rect r = statesRowRect(l, row);
+            const bool selected = row == statesSelected_;
+            if (selected) drawSelection(r);
+            else drawPixelBox(r, hovered(r) ? palette::kPanelHover : palette::kPanel);
+            const Rect thumb{r.x + 22, r.y + (r.h - kThumbH) / 2, kThumbW, kThumbH};
+            const float textX = thumb.x + kThumbW + 14, textW = r.x + r.w - 12 - textX;
+            const Color detailColor = selected ? palette::kGoldLight : palette::kTextDim;
+            const StateInfo* state = stateAt(row);
+            if (!state) {
+                // A gold "+" where the screenshot would be.
+                drawPixelBox(thumb, withAlpha(palette::kGold, 0.16), withAlpha(palette::kGold, 0.6));
+                drawTextIn(thumb, "+", 22, palette::kGoldLight, true, Align::Center);
+                drawText(fitText("Save a new state", 15, true, textW), textX, r.y + 7, 15, palette::kText, true);
+                drawText(fitText("Come back to this moment later", 12, false, textW), textX, r.y + 29, 12,
+                         detailColor);
+                continue;
+            }
+            drawStateScreenshot(thumb, state->path, 1);
+            if (state->kind == StateKind::Backup)  // a thin border tells backups apart at a glance
+                drawPixelBox({thumb.x - 2, thumb.y - 2, thumb.w + 4, thumb.h + 4}, {0, 0, 0, 0},
+                             withAlpha(palette::kTextDim, 0.5), 1);
+            drawText(fitText(stateTimeLabel(state->createdMs), 15, true, textW), textX, r.y + 7, 15, palette::kText,
+                     true);
+            drawText(fitText(stateKindLabel(state->kind) + "  \u00B7  " + ageLabel(state->createdMs), 12, false, textW),
+                     textX, r.y + 29, 12, detailColor);
+        }
+        if (count == 1) {
+            drawText(fitText("No save states yet.", 13, false, l.list.w - 20), l.list.x + l.list.w / 2,
+                     l.list.y + kStatesPitch + 16, 13, palette::kTextDim, false, Align::Center);
+        }
+        if (count > l.visibleRows) {  // scrollbar
+            const Rect track{l.list.x + l.list.w - 4, l.list.y, 4, l.visibleRows * kStatesPitch - 6};
+            fill(track, {255, 255, 255, 20});
+            const float thumbH = std::max(24.0f, track.h * l.visibleRows / count);
+            const float thumbY = track.y + (track.h - thumbH) * statesScroll_ / std::max(1, count - l.visibleRows);
+            fill({track.x, thumbY, track.w, thumbH}, withAlpha(palette::kGold, 0.75));
+        }
+
+        // Preview of the selected row: its screenshot, when it was made, and what can be done with it.
+        const Rect& p = l.preview;
+        drawPixelBox(p, palette::kPanel, palette::kBorder, 3);
+        constexpr float kPad = 16, kBezel = 5, kInfoH = 124;
+        const float maxW = p.w - 2 * (kPad + kBezel), maxH = p.h - 2 * (kPad + kBezel) - kInfoH;
+        float w = maxW, h = w * kScreenHeight / kScreenWidth;
+        if (h > maxH) { h = maxH; w = h * kScreenWidth / kScreenHeight; }
+        const float whole = std::floor(w * scale_ / kScreenWidth);  // whole-number scaling keeps pixels sharp
+        if (whole >= 1) { w = whole * kScreenWidth / scale_; h = whole * kScreenHeight / scale_; }
+        const StateInfo* state = stateAt(statesSelected_);
+        if (w > 0 && h > 0) {
+            const Rect shot{p.x + (p.w - w) / 2, p.y + kPad + kBezel + (maxH - h) / 2, w, h};
+            drawPixelBox({shot.x - kBezel, shot.y - kBezel, shot.w + 2 * kBezel, shot.h + 2 * kBezel}, {8, 8, 22},
+                         {255, 255, 255, 30});
+            drawStateScreenshot(shot, state ? state->path : "", 3);
+        }
+        const float textX = p.x + kPad, textW = p.w - 2 * kPad;
+        const float infoY = l.mainButton.y - 18 - 52;
+        if (state) {
+            drawText(fitText(stateTimeLabel(state->createdMs), 17, true, textW), textX, infoY, 17, palette::kText, true);
+            drawText(fitText(stateKindLabel(state->kind, true) + "  \u00B7  " + ageLabel(state->createdMs), 12, false,
+                             textW),
+                     textX, infoY + 28, 12, palette::kTextDim);
+        } else {
+            drawText(fitText("Right now", 17, true, textW), textX, infoY, 17, palette::kText, true);
+            drawText(fitText(quickSaveHint(), 12, false, textW), textX, infoY + 28, 12, palette::kTextDim);
+        }
+        drawGoldButton(l.mainButton, state ? "\u25B6  Load" : "+  Save", 15, hovered(l.mainButton));
+        if (state) {
+            const bool armed = statesDeleteArmed_ == statesSelected_;
+            if (armed) drawPixelBox(l.deleteButton, withAlpha(palette::kGold, 0.22), palette::kGold);
+            else drawButton(l.deleteButton, "Delete");
+            if (armed) drawTextIn(l.deleteButton, "Sure?", 14, palette::kGoldLight, true, Align::Center);
+        }
+
+        std::vector<Hint> hints;
+        const char* accept = controller_ ? confirmGlyph() : "Return";
+        hints.push_back({accept, state ? "Load" : "Save"});
+        if (state) hints.push_back({controller_ ? "\u25B3" : "\u232B", "Delete"});
+        hints.push_back({controller_ ? backGlyph() : "Esc", "Back"});
+        drawHints(hints, l.panel.x + l.panel.w / 2, l.panel.y + l.panel.h - 30, l.panel.w - 24, Align::Center);
+        drawToast();
+    }
+
     // ---- Library ----
 
     struct LibraryLayout {
@@ -2260,7 +2688,8 @@ private:
         drawMoon(32, logoY, 2);
         drawText(fitText(kWordmark, titleSize, true, titleMaxWidth), titleX, 22 + (26 - titleSize) / 2, titleSize,
                  palette::kGoldLight, true);
-        drawText(kTagline, titleX + 1, 58, 10, palette::kTextDim, true);
+        drawText(std::string(kTagline) + "  |  Version " + LALUNE_VERSION, titleX + 1, 58, 10,
+                 palette::kTextDim, true);
         drawButton(l.settingsButton, "Settings");
         drawButton(l.folderButton, "Open Folder");
         drawGoldButton(l.addButton, "Add ROMs\u2026", 14, hovered(l.addButton));
@@ -2744,6 +3173,30 @@ public:
                 screen_ = Screen::Settings;
                 settingsReturn_ = Screen::Paused;
                 shot("settings-over-game", [&] { drawSettings(); });
+                // Save States, with a few states kept in the dump folder (not the real one).
+                screen_ = Screen::States;
+                states_.open((fs::path(dir) / "states").string(), gba_->romHash());
+                std::string error;
+                if (states_.list().size() < 3) {
+                    for (int i = 0; i < 3; ++i) {
+                        for (int f = 0; f < 60; ++f) gba_->runFrame();
+                        states_.save(*gba_, i == 2 ? StateKind::Backup : StateKind::Saved, error);
+                    }
+                }
+                gba_->apu.samples.clear();
+                clearStateScreenshots();
+                statesScroll_ = 0;
+                statesDeleteArmed_ = -1;
+                statesSelected_ = 0;
+                shot("states-new", [&] { drawStates(); });
+                statesSelected_ = std::min(2, statesRowCount() - 1);
+                shot("states", [&] { drawStates(); });
+                statesDeleteArmed_ = statesSelected_;
+                shot("states-delete", [&] { drawStates(); });
+                statesDeleteArmed_ = -1;
+                screen_ = Screen::Paused;
+                pauseSelected_ = static_cast<int>(PauseItem::SaveStates);
+                shot("pause-states-item", [&] { drawPauseMenu(); });
             }
             screen_ = Screen::Library;
             library_.setFolder((fs::path(dir) / "empty-library").string());
@@ -2760,7 +3213,7 @@ public:
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string romPath, dumpPath, savePath, uiDumpDir;
+    std::string romPath, dumpPath, savePath, uiDumpDir, loadStatePath, saveStatePath;
     int headlessFrames = 0, dumpEvery = 0, dumpFilter = -1;
     std::vector<std::pair<int, u16>> presses;
 
@@ -2772,6 +3225,8 @@ int main(int argc, char** argv) {
         else if (arg == "--save" && i + 1 < argc) savePath = argv[++i];
         else if (arg == "--filter" && i + 1 < argc) dumpFilter = std::stoi(argv[++i]);  // 0-6, see VideoFilter
         else if (arg == "--ui-dump" && i + 1 < argc) uiDumpDir = argv[++i];
+        else if (arg == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
+        else if (arg == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
         else if (arg == "--press" && i + 1 < argc) {
             // Format: frame:key[,frame:key...]  e.g. 300:start,400:a
             std::stringstream list(argv[++i]);
@@ -2804,8 +3259,30 @@ int main(int argc, char** argv) {
             if (!savePath.empty()) {
                 std::printf("Save file %s\n", gba->loadSave(savePath) ? "loaded" : "not found (new save)");
             }
-            result = runHeadless(*gba, headlessFrames, dumpPath, presses, dumpEvery,
-                                 std::clamp(dumpFilter, -1, kVideoFilterCount - 1));
+            if (!loadStatePath.empty()) {
+                std::string error;
+                const auto file = SaveStates::readFile(loadStatePath, *gba, error);
+                if (!file || !SaveStates::apply(*gba, *file)) {
+                    std::fprintf(stderr, "Could not load state '%s': %s\n", loadStatePath.c_str(),
+                                 error.empty() ? "it doesn't fit this program" : error.c_str());
+                    result = 1;
+                } else {
+                    std::printf("State loaded from %s\n", loadStatePath.c_str());
+                }
+            }
+            if (result == 0) {
+                result = runHeadless(*gba, headlessFrames, dumpPath, presses, dumpEvery,
+                                     std::clamp(dumpFilter, -1, kVideoFilterCount - 1));
+            }
+            if (result == 0 && !saveStatePath.empty()) {
+                std::string error;
+                if (SaveStates::writeFile(saveStatePath, *gba, StateKind::Saved, SaveStates::nowMs(), error)) {
+                    std::printf("State written to %s\n", saveStatePath.c_str());
+                } else {
+                    std::fprintf(stderr, "Could not write state '%s': %s\n", saveStatePath.c_str(), error.c_str());
+                    result = 1;
+                }
+            }
             if (!savePath.empty() && gba->writeSave(savePath)) std::printf("Save written to %s\n", savePath.c_str());
         }
     } else if (!uiDumpDir.empty()) {

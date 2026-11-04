@@ -32,6 +32,10 @@ Bindings Bindings::defaults(bool circleIsA) {
     set(Control::TurboB, kUnbound, kUnbound, kUnbound, kUnbound);
     set(Control::FastForward, SDLK_TAB, kUnbound, SDL_CONTROLLER_BUTTON_TOUCHPAD, kUnbound);
     set(Control::SlowMotion, SDLK_BACKQUOTE, kUnbound, SDL_CONTROLLER_BUTTON_RIGHTSTICK, kUnbound);
+    // Save states (Cmd+S and Cmd+L also work, see main.cpp). Quick load has no
+    // controller button by default, so it can't be pressed by accident.
+    set(Control::QuickSave, SDLK_F5, kUnbound, SDL_CONTROLLER_BUTTON_LEFTSTICK, kUnbound);
+    set(Control::QuickLoad, SDLK_F8, kUnbound, kUnbound, kUnbound);
     return b;
 }
 
@@ -51,6 +55,8 @@ const char* controlName(Control control) {
     case Control::TurboB: return "Turbo B";
     case Control::FastForward: return "Fast-forward";
     case Control::SlowMotion: return "Slow motion";
+    case Control::QuickSave: return "Quick save state";
+    case Control::QuickLoad: return "Quick load state";
     case Control::Count: break;
     }
     return "";
@@ -72,6 +78,8 @@ const char* controlId(Control control) {
     case Control::TurboB: return "turbo_b";
     case Control::FastForward: return "fast_forward";
     case Control::SlowMotion: return "slow_motion";
+    case Control::QuickSave: return "quick_save";
+    case Control::QuickLoad: return "quick_load";
     case Control::Count: break;
     }
     return "";

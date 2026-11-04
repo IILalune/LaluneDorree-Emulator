@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <fstream>
 
+#include "state.hpp"
+
 GBA::GBA()
     : bus(*this), cpu(*this), ppu(*this), apu(*this), timers(*this), dma(*this), bios(*this) {}
 
@@ -12,9 +14,42 @@ bool GBA::loadRom(std::vector<u8> data, std::string* error) {
         if (error) *error = "File is not a valid GBA ROM (wrong size).";
         return false;
     }
+    romHash_ = hashBytes(data.data(), data.size());
     bus.loadRom(std::move(data));
     reset();
     return true;
+}
+
+void GBA::serialize(StateStream& s) {
+    bus.serialize(s);
+    cpu.serialize(s);
+    ppu.serialize(s);
+    apu.serialize(s);
+    timers.serialize(s);
+    dma.serialize(s);
+    bios.serialize(s);
+    s.section("END ");
+}
+
+std::vector<u8> GBA::saveState() {
+    std::vector<u8> data;
+    data.reserve(512 * 1024);
+    StateStream out(data);
+    serialize(out);
+    return data;
+}
+
+bool GBA::loadState(const std::vector<u8>& data) {
+    // Loading writes fields one by one, so a state that turns out to be bad
+    // halfway through would leave a mix of old and new. Keep a copy of the
+    // current state to put back in that case.
+    std::vector<u8> before = saveState();
+    StateStream in(data.data(), data.size());
+    serialize(in);
+    if (in.ok() && in.atEnd()) return true;
+    StateStream restore(before.data(), before.size());
+    serialize(restore);
+    return false;
 }
 
 void GBA::reset() {

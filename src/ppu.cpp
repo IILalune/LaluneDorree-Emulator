@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "gba.hpp"
+#include "state.hpp"
 
 namespace {
 constexpr int kDrawCycles = 960;    // cycles spent drawing a visible line
@@ -441,4 +442,18 @@ void PPU::composite() {
         }
         out[x] = toRgb(result);
     }
+}
+
+void PPU::serialize(StateStream& s) {
+    s.section("PPU ");
+    s.value(frameReady);
+    s.value(lineCycles_);
+    s.value(inHBlank_);
+    s.value(vcount_);
+    s.value(affineX_);
+    s.value(affineY_);
+    s.value(bgLine_);
+    s.value(objLine_);
+    s.value(objWindow_);
+    if (s.loading() && vcount_ >= 228) vcount_ = 0;  // vcount_ picks the framebuffer line to draw
 }

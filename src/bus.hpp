@@ -16,6 +16,7 @@
 #include "common.hpp"
 
 class GBA;
+class StateStream;
 
 class Bus {
 public:
@@ -48,6 +49,10 @@ public:
     u16& reg(u32 offset) { return io[offset >> 1]; }
 
     bool backupDirty() const;
+    // All memory and registers except the ROM and the cartridge's save
+    // memory (SRAM / EEPROM data). Loading a state never changes the save
+    // file, so in-game saves and save states stay independent.
+    void serialize(StateStream& s);
     void clearBackupDirty();
 
     // Memory blocks. std::array has a fixed size known at compile time.
