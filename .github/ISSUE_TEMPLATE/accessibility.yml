@@ -1,0 +1,33 @@
+name: Accessibility feedback
+description: Tell us about a barrier involving controls, readability, sensory comfort, or assistive technology.
+title: "[Accessibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feedback from neurodivergent, autistic, disabled, and other players is welcome, as is feedback from parents, caregivers, educators, and support people.
+        You do not need to disclose a diagnosis or medical history. Describe the barrier and what would help.
+        This report is public: do not include a child's identity, photos, school, location, medical records, or contact details.
+        See our [accessibility statement](https://github.com/IILalune/LaluneDorree-Emulator/blob/main/ACCESSIBILITY.md) for current options and limitations.
+  - type: textarea
+    id: barrier
+    attributes:
+      label: What is difficult or uncomfortable?
+      description: Tell us which screen or action is involved and what makes it hard to use.
+    validations:
+      required: true
+  - type: textarea
+    id: improvement
+    attributes:
+      label: What would help? (optional)
+      description: For example, less motion, clearer wording, larger text, or a different way to navigate. It is fine if you do not know the solution.
+  - type: input
+    id: environment
+    attributes:
+      label: App version and setup (optional)
+      description: Include the macOS version, input device, or assistive technology if relevant. No personal or medical details are needed.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Anything else you want us to know? (optional)
+      description: You can mention a workaround or a setting you tried. Do not attach ROMs, private data, or images identifying a child.

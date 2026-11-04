@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a crash, game compatibility issue, save problem, or controller bug.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve LaLune Dorée Emulator!
+        For suspected vulnerabilities, follow the [security policy](https://github.com/IILalune/LaluneDorree-Emulator/blob/main/SECURITY.md) instead of posting details here.
+        Do not attach commercial ROMs, BIOS files, keys, or private information. Review logs, screenshots, saves, and state files before sharing them.
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      placeholder: "For example: 1.02, or the commit if built from source"
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: macOS version and Mac architecture
+      placeholder: "For example: macOS 15.7, Apple Silicon (M2)"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation
+      options:
+        - Downloaded DMG
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Explain what you did, starting from opening the app.
+      placeholder: |
+        1. Open the app...
+        2. Select...
+        3. The problem happens when...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual behavior
+      description: What should happen, and what happens instead?
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game details (if relevant)
+      description: Title, region, and game code shown in the library. Do not upload the ROM or link to a download.
+  - type: textarea
+    id: settings
+    attributes:
+      label: Relevant settings and devices
+      description: For controller issues, include the model, USB/Bluetooth connection, and custom bindings. For graphics or save issues, include filter settings or whether this concerns in-game saves or save states.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or other context (optional)
+      description: Remove personal information. Only share files you have the right to redistribute.

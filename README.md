@@ -434,6 +434,14 @@ See [Contributing](CONTRIBUTING.md) for reporting bugs and submitting changes,
 the [Code of conduct](CODE_OF_CONDUCT.md) for community expectations, and
 the [Security policy](SECURITY.md) for reporting vulnerabilities privately.
 
+### Accessibility and inclusion
+
+Neurodivergent and autistic players, including children, are welcome here. We support awareness
+and listening to different needs around controls, readability, sensory comfort, and clear instructions.
+Players, parents, caregivers, educators, and support people can share barriers through the
+**Accessibility feedback** issue form, without sharing diagnoses or a child's personal information.
+See [Accessibility](ACCESSIBILITY.md) for current options, limitations, and reporting guidance.
+
 The app icon is drawn by `tools/make_icon.py`. Edit it and run it to regenerate `assets/AppIcon.icns`.
 
 ## Credits

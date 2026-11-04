@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/IILalune/LaluneDorree-Emulator/blob/main/SECURITY.md
+    about: Follow the security policy. Do not disclose vulnerability details in public issues.
+  - name: Community guidelines and conduct concerns
+    url: https://github.com/IILalune/LaluneDorree-Emulator/blob/main/CODE_OF_CONDUCT.md
+    about: Read community expectations and how to arrange private contact about conduct concerns.
