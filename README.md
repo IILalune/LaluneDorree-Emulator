@@ -8,11 +8,11 @@
 <em>La lune dorée</em>.
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/IILalune/LaluneDorree-Emulator/refs/heads/main/release/LaLuneDoree-macOS.dmg">
+  <a href="https://raw.githubusercontent.com/IILalune/LaluneDorree-Emulator/refs/heads/release/1.01/release/LaLuneDoree-macOS.dmg">
     <img src="https://img.shields.io/badge/Download_for_macOS-.dmg-F5B628?style=for-the-badge&logo=apple&logoColor=white" alt="Download LaLune Dorée Emulator for macOS">
   </a>
   <br>
-  <sub>macOS 11 or later · Apple Silicon and Intel · 1.6 MB</sub>
+  <sub>Version 1.01 · macOS 11 or later · Apple Silicon and Intel · 1.85 MB</sub>
 </p>
 
 ---
@@ -39,7 +39,7 @@ it models, so it doubles as a guide to how the GBA works.
 
 ## Install
 
-1. Download **[LaLuneDoree-macOS.dmg](https://raw.githubusercontent.com/IILalune/LaluneDorree-Emulator/refs/heads/main/release/LaLuneDoree-macOS.dmg)** and double-click it.
+1. Download **[LaLuneDoree-macOS.dmg — Version 1.01](https://raw.githubusercontent.com/IILalune/LaluneDorree-Emulator/refs/heads/release/1.01/release/LaLuneDoree-macOS.dmg)** (1.85 MB) and double-click it.
 2. In the window that opens, drag **LaLune Dorée Emulator** onto the **Applications** folder.
 3. Eject the "LaLune Dorée Emulator" disk in Finder, and delete the `.dmg` if you like.
 
