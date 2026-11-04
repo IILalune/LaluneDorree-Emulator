@@ -423,12 +423,16 @@ Read the files roughly in this order. Each one starts with a comment explaining 
 Bug reports and pull requests are welcome. Good places to start:
 
 - Flash save chips, so more games keep their saves (`backup.hpp`).
-- Save states: write every component's state to a file and read it back.
+- Save-state reliability and compatibility checks.
 - More accurate GamePak prefetch timing (`Bus::fetch16/32`).
 - A debugger that prints registers and disassembles the instruction at `CPU::currentInstruction()`.
 - A faster CPU interpreter, for example with a decode lookup table in `CPU::step()`.
 
 Please keep the style of the existing code: each file explains the hardware it models in plain language.
+
+See [Contributing](CONTRIBUTING.md) for reporting bugs and submitting changes,
+the [Code of conduct](CODE_OF_CONDUCT.md) for community expectations, and
+the [Security policy](SECURITY.md) for reporting vulnerabilities privately.
 
 The app icon is drawn by `tools/make_icon.py`. Edit it and run it to regenerate `assets/AppIcon.icns`.
 
