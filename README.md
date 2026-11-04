@@ -456,14 +456,14 @@ You're welcome to use, study, and build on LaLune Dorée Emulator. If you do, pl
 - **If you add a feature you saw here,** such as one of the video filters, the game library, or the
   DualSense controls, please credit this project even if you wrote your own version. Put the credit
   where people will see it, such as your README or About screen. This part is a request, not a
-  license requirement.
+  license requirement ~UwU~!
 
 You can use this wording:
 
 > Based on [LaLune Dorée Emulator](https://github.com/IILalune/LaluneDorree-Emulator) by Paul Hoang,
 > built with [Kiro](https://kiro.dev).
 
-If you only borrowed an idea, write "Inspired by" instead of "Based on".
+If you only borrowed an idea, write "Inspired by" instead of "Based on". :3
 
 ## Legal
 
