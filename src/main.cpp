@@ -1800,7 +1800,7 @@ private:
         if (textCache_.size() > 512) clearTextCache();  // keep memory bounded
 
         TextTexture result;
-        const macui::TextImage image = macui::renderText(text, size * scale_, bold);
+        const macui::TextImage image = macui::renderText(text, static_cast<double>(size) * scale_, bold);
         if (image.width > 0 && image.height > 0) {
             result.texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
                                                image.width, image.height);
@@ -1851,7 +1851,9 @@ private:
         const std::string key = text + '\x1f' + std::to_string(static_cast<int>(size * 10)) + (bold ? 'b' : 'r') +
                                 std::to_string(static_cast<int>(maxWidth));
         if (auto it = fitCache_.find(key); it != fitCache_.end()) return it->second;
-        auto width = [&](const std::string& s) { return macui::measureText(s, size * scale_, bold) / scale_; };
+        auto width = [&](const std::string& s) {
+            return macui::measureText(s, static_cast<double>(size) * scale_, bold) / scale_;
+        };
         std::string result = text;
         if (width(result) > maxWidth) {
             std::string base = text;
@@ -2664,7 +2666,8 @@ private:
             titleFitWidth_ = maxWidth;
             titleFitScale_ = scale_;
             titleFitSize_ = 26;
-            while (titleFitSize_ > 16 && macui::measureText(kWordmark, titleFitSize_ * scale_, true) / scale_ > maxWidth)
+            while (titleFitSize_ > 16 &&
+                   macui::measureText(kWordmark, static_cast<double>(titleFitSize_) * scale_, true) / scale_ > maxWidth)
                 titleFitSize_ -= 1;
         }
         return titleFitSize_;

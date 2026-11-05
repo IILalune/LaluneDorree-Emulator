@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes target the latest release, currently **1.02**, and the `main` branch.
+Security fixes target the latest release, currently **1.03**, and the `main` branch.
 Historical release branches are archives; fixes are not routinely backported.
 Please update before reporting an issue that may already have been fixed.
 
